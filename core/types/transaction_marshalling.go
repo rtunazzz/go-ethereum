@@ -507,6 +507,33 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			}
 		}
 
+	case 0x7e:
+		itx := LegacyTx{
+			Nonce:    0,
+			To:       &common.MaxAddress,
+			Value:    big.NewInt(0),
+			Gas:      0,
+			GasPrice: big.NewInt(0),
+			Data:     []byte{},
+		}
+		inner = &itx
+
+		// signature R
+		if dec.R == nil {
+			return errors.New("missing required field 'r' in transaction")
+		}
+		itx.R = (*big.Int)(dec.R)
+		// signature S
+		if dec.S == nil {
+			return errors.New("missing required field 's' in transaction")
+		}
+		itx.S = (*big.Int)(dec.S)
+		// signature V
+		if dec.V == nil {
+			return errors.New("missing required field 'v' in transaction")
+		}
+		itx.V = (*big.Int)(dec.V)
+
 	default:
 		return ErrTxTypeNotSupported
 	}
