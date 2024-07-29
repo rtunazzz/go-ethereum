@@ -42,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/fdlimit"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -291,7 +292,7 @@ var (
 	}
 	BeaconApiHeaderFlag = &cli.StringSliceFlag{
 		Name:     "beacon.api.header",
-		Usage:    "Pass custom HTTP header fields to the emote beacon node API in \"key:value\" format. This flag can be given multiple times.",
+		Usage:    "Pass custom HTTP header fields to the remote beacon node API in \"key:value\" format. This flag can be given multiple times.",
 		Category: flags.BeaconCategory,
 	}
 	BeaconThresholdFlag = &cli.IntFlag{
@@ -544,8 +545,8 @@ var (
 		Usage:    "Name of tracer which should record internal VM operations (costly)",
 		Category: flags.VMCategory,
 	}
-	VMTraceConfigFlag = &cli.StringFlag{
-		Name:     "vmtrace.config",
+	VMTraceJsonConfigFlag = &cli.StringFlag{
+		Name:     "vmtrace.jsonconfig",
 		Usage:    "Tracer configuration (JSON)",
 		Category: flags.VMCategory,
 	}
@@ -604,6 +605,11 @@ var (
 		Usage:    "Disables db compaction after import",
 		Category: flags.LoggingCategory,
 	}
+	CollectWitnessFlag = &cli.BoolFlag{
+		Name:     "collectwitness",
+		Usage:    "Enable state witness generation during block execution. Work in progress flag, don't use.",
+		Category: flags.MiscCategory,
+	}
 
 	// MISC settings
 	SyncTargetFlag = &cli.StringFlag{
@@ -661,7 +667,7 @@ var (
 	}
 	HTTPPathPrefixFlag = &cli.StringFlag{
 		Name:     "http.rpcprefix",
-		Usage:    "HTTP path path prefix on which JSON-RPC is served. Use '/' to serve on all paths.",
+		Usage:    "HTTP path prefix on which JSON-RPC is served. Use '/' to serve on all paths.",
 		Value:    "",
 		Category: flags.APICategory,
 	}
@@ -1545,6 +1551,18 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 	}
 }
 
+func setBlobPool(ctx *cli.Context, cfg *blobpool.Config) {
+	if ctx.IsSet(BlobPoolDataDirFlag.Name) {
+		cfg.Datadir = ctx.String(BlobPoolDataDirFlag.Name)
+	}
+	if ctx.IsSet(BlobPoolDataCapFlag.Name) {
+		cfg.Datacap = ctx.Uint64(BlobPoolDataCapFlag.Name)
+	}
+	if ctx.IsSet(BlobPoolPriceBumpFlag.Name) {
+		cfg.PriceBump = ctx.Uint64(BlobPoolPriceBumpFlag.Name)
+	}
+}
+
 func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	if ctx.Bool(MiningEnabledFlag.Name) {
 		log.Warn("The flag --mine is deprecated and will be removed")
@@ -1646,6 +1664,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setEtherbase(ctx, cfg)
 	setGPO(ctx, &cfg.GPO)
 	setTxPool(ctx, &cfg.TxPool)
+	setBlobPool(ctx, &cfg.BlobPool)
 	setMiner(ctx, &cfg.Miner)
 	setRequiredBlocks(ctx, cfg)
 	setLes(ctx, cfg)
@@ -1760,6 +1779,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		// TODO(fjl): force-enable this in --dev mode
 		cfg.EnablePreimageRecording = ctx.Bool(VMEnableDebugFlag.Name)
 	}
+	if ctx.IsSet(CollectWitnessFlag.Name) {
+		cfg.EnableWitnessCollection = ctx.Bool(CollectWitnessFlag.Name)
+	}
 
 	if ctx.IsSet(RPCGlobalGasCapFlag.Name) {
 		cfg.RPCGasCap = ctx.Uint64(RPCGlobalGasCapFlag.Name)
@@ -1872,13 +1894,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 					Fatalf("Could not read genesis from database: %v", err)
 				}
 				if !genesis.Config.TerminalTotalDifficultyPassed {
-					Fatalf("Bad developer-mode genesis configuration: terminalTotalDifficultyPassed must be true in developer mode")
+					Fatalf("Bad developer-mode genesis configuration: terminalTotalDifficultyPassed must be true")
 				}
 				if genesis.Config.TerminalTotalDifficulty == nil {
-					Fatalf("Bad developer-mode genesis configuration: terminalTotalDifficulty must be specified.")
+					Fatalf("Bad developer-mode genesis configuration: terminalTotalDifficulty must be specified")
+				} else if genesis.Config.TerminalTotalDifficulty.Cmp(big.NewInt(0)) != 0 {
+					Fatalf("Bad developer-mode genesis configuration: terminalTotalDifficulty must be 0")
 				}
-				if genesis.Difficulty.Cmp(genesis.Config.TerminalTotalDifficulty) != 1 {
-					Fatalf("Bad developer-mode genesis configuration: genesis block difficulty must be > terminalTotalDifficulty")
+				if genesis.Difficulty.Cmp(big.NewInt(0)) != 0 {
+					Fatalf("Bad developer-mode genesis configuration: difficulty must be 0")
 				}
 			}
 			chaindb.Close()
@@ -1903,12 +1927,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {
 			var config string
-			if ctx.IsSet(VMTraceConfigFlag.Name) {
-				config = ctx.String(VMTraceConfigFlag.Name)
+			if ctx.IsSet(VMTraceJsonConfigFlag.Name) {
+				config = ctx.String(VMTraceJsonConfigFlag.Name)
 			}
 
 			cfg.VMTrace = name
-			cfg.VMTraceConfig = config
+			cfg.VMTraceJsonConfig = config
 		}
 	}
 }
@@ -1959,7 +1983,7 @@ func RegisterFilterAPI(stack *node.Node, backend ethapi.Backend, ethcfg *ethconf
 	})
 	stack.RegisterAPIs([]rpc.API{{
 		Namespace: "eth",
-		Service:   filters.NewFilterAPI(filterSystem, false),
+		Service:   filters.NewFilterAPI(filterSystem),
 	}})
 	return filterSystem
 }
@@ -2188,12 +2212,15 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheGCFlag.Name) {
 		cache.TrieDirtyLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
 	}
-	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
+	vmcfg := vm.Config{
+		EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name),
+		EnableWitnessCollection: ctx.Bool(CollectWitnessFlag.Name),
+	}
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {
 			var config json.RawMessage
-			if ctx.IsSet(VMTraceConfigFlag.Name) {
-				config = json.RawMessage(ctx.String(VMTraceConfigFlag.Name))
+			if ctx.IsSet(VMTraceJsonConfigFlag.Name) {
+				config = json.RawMessage(ctx.String(VMTraceJsonConfigFlag.Name))
 			}
 			t, err := tracers.LiveDirectory.New(name, config)
 			if err != nil {

@@ -32,6 +32,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -53,8 +56,6 @@ import (
 	"github.com/ethereum/go-ethereum/internal/blocktest"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/holiman/uint256"
-	"github.com/stretchr/testify/require"
 )
 
 func testTransactionMarshal(t *testing.T, tests []txData, config *params.ChainConfig) {
@@ -468,17 +469,18 @@ func (b testBackend) SyncProgress() ethereum.SyncProgress { return ethereum.Sync
 func (b testBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 	return big.NewInt(0), nil
 }
-func (b testBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
-	return nil, nil, nil, nil, nil
+func (b testBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, []*big.Int, []float64, error) {
+	return nil, nil, nil, nil, nil, nil, nil
 }
-func (b testBackend) ChainDb() ethdb.Database           { return b.db }
-func (b testBackend) AccountManager() *accounts.Manager { return b.accman }
-func (b testBackend) ExtRPCEnabled() bool               { return false }
-func (b testBackend) RPCGasCap() uint64                 { return 10000000 }
-func (b testBackend) RPCEVMTimeout() time.Duration      { return time.Second }
-func (b testBackend) RPCTxFeeCap() float64              { return 0 }
-func (b testBackend) UnprotectedAllowed() bool          { return false }
-func (b testBackend) SetHead(number uint64)             {}
+func (b testBackend) BlobBaseFee(ctx context.Context) *big.Int { return new(big.Int) }
+func (b testBackend) ChainDb() ethdb.Database                  { return b.db }
+func (b testBackend) AccountManager() *accounts.Manager        { return b.accman }
+func (b testBackend) ExtRPCEnabled() bool                      { return false }
+func (b testBackend) RPCGasCap() uint64                        { return 10000000 }
+func (b testBackend) RPCEVMTimeout() time.Duration             { return time.Second }
+func (b testBackend) RPCTxFeeCap() float64                     { return 0 }
+func (b testBackend) UnprotectedAllowed() bool                 { return false }
+func (b testBackend) SetHead(number uint64)                    {}
 func (b testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	if number == rpc.LatestBlockNumber {
 		return b.chain.CurrentBlock(), nil
@@ -749,7 +751,7 @@ func TestEstimateGas(t *testing.T) {
 				From:       &accounts[0].addr,
 				To:         &accounts[1].addr,
 				Value:      (*hexutil.Big)(big.NewInt(1)),
-				BlobHashes: []common.Hash{common.Hash{0x01, 0x22}},
+				BlobHashes: []common.Hash{{0x01, 0x22}},
 				BlobFeeCap: (*hexutil.Big)(big.NewInt(1)),
 			},
 			want: 21000,
@@ -779,15 +781,24 @@ func TestEstimateGas(t *testing.T) {
 
 func TestCall(t *testing.T) {
 	t.Parallel()
+
 	// Initialize test accounts
 	var (
 		accounts = newAccounts(3)
+		dad      = common.HexToAddress("0x0000000000000000000000000000000000000dad")
 		genesis  = &core.Genesis{
 			Config: params.MergedTestChainConfig,
 			Alloc: types.GenesisAlloc{
 				accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 				accounts[1].addr: {Balance: big.NewInt(params.Ether)},
 				accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+				dad: {
+					Balance: big.NewInt(params.Ether),
+					Nonce:   1,
+					Storage: map[common.Hash]common.Hash{
+						common.Hash{}: common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000001"),
+					},
+				},
 			},
 		}
 		genBlocks = 10
@@ -902,7 +913,7 @@ func TestCall(t *testing.T) {
 			overrides: StateOverride{
 				randomAccounts[2].addr: OverrideAccount{
 					Code:      hex2Bytes("6080604052348015600f57600080fd5b506004361060285760003560e01c80638381f58a14602d575b600080fd5b60336049565b6040518082815260200191505060405180910390f35b6000548156fea2646970667358221220eab35ffa6ab2adfe380772a48b8ba78e82a1b820a18fcb6f59aa4efb20a5f60064736f6c63430007040033"),
-					StateDiff: &map[common.Hash]common.Hash{{}: common.BigToHash(big.NewInt(123))},
+					StateDiff: map[common.Hash]common.Hash{{}: common.BigToHash(big.NewInt(123))},
 				},
 			},
 			want: "0x000000000000000000000000000000000000000000000000000000000000007b",
@@ -937,7 +948,7 @@ func TestCall(t *testing.T) {
 			call: TransactionArgs{
 				From:       &accounts[1].addr,
 				To:         &randomAccounts[2].addr,
-				BlobHashes: []common.Hash{common.Hash{0x01, 0x22}},
+				BlobHashes: []common.Hash{{0x01, 0x22}},
 				BlobFeeCap: (*hexutil.Big)(big.NewInt(1)),
 			},
 			overrides: StateOverride{
@@ -946,6 +957,32 @@ func TestCall(t *testing.T) {
 				},
 			},
 			want: "0x0122000000000000000000000000000000000000000000000000000000000000",
+		},
+		// Clear the entire storage set
+		{
+			blockNumber: rpc.LatestBlockNumber,
+			call: TransactionArgs{
+				From: &accounts[1].addr,
+				// Yul:
+				// object "Test" {
+				//    code {
+				//        let dad := 0x0000000000000000000000000000000000000dad
+				//        if eq(balance(dad), 0) {
+				//            revert(0, 0)
+				//        }
+				//        let slot := sload(0)
+				//        mstore(0, slot)
+				//        return(0, 32)
+				//    }
+				// }
+				Input: hex2Bytes("610dad6000813103600f57600080fd5b6000548060005260206000f3"),
+			},
+			overrides: StateOverride{
+				dad: OverrideAccount{
+					State: map[common.Hash]common.Hash{},
+				},
+			},
+			want: "0x0000000000000000000000000000000000000000000000000000000000000000",
 		},
 	}
 	for i, tc := range testSuite {
@@ -1061,7 +1098,7 @@ func TestSendBlobTransaction(t *testing.T) {
 		From:       &b.acc.Address,
 		To:         &to,
 		Value:      (*hexutil.Big)(big.NewInt(1)),
-		BlobHashes: []common.Hash{common.Hash{0x01, 0x22}},
+		BlobHashes: []common.Hash{{0x01, 0x22}},
 	})
 	if err != nil {
 		t.Fatalf("failed to fill tx defaults: %v\n", err)
@@ -1306,9 +1343,9 @@ func newAccounts(n int) (accounts []account) {
 	return accounts
 }
 
-func newRPCBalance(balance *big.Int) **hexutil.Big {
+func newRPCBalance(balance *big.Int) *hexutil.Big {
 	rpcBalance := (*hexutil.Big)(balance)
-	return &rpcBalance
+	return rpcBalance
 }
 
 func hex2Bytes(str string) *hexutil.Bytes {
@@ -1346,7 +1383,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 		}
 		txs = append(txs, tx)
 	}
-	block := types.NewBlock(&types.Header{Number: big.NewInt(100)}, txs, nil, nil, blocktest.NewHasher())
+	block := types.NewBlock(&types.Header{Number: big.NewInt(100)}, &types.Body{Transactions: txs}, nil, blocktest.NewHasher())
 
 	var testSuite = []struct {
 		inclTx bool
@@ -1557,7 +1594,7 @@ func TestRPCGetBlockOrHeader(t *testing.T) {
 			Address:   common.Address{0x12, 0x34},
 			Amount:    10,
 		}
-		pending = types.NewBlockWithWithdrawals(&types.Header{Number: big.NewInt(11), Time: 42}, []*types.Transaction{tx}, nil, nil, []*types.Withdrawal{withdrawal}, blocktest.NewHasher())
+		pending = types.NewBlock(&types.Header{Number: big.NewInt(11), Time: 42}, &types.Body{Transactions: types.Transactions{tx}, Withdrawals: types.Withdrawals{withdrawal}}, nil, blocktest.NewHasher())
 	)
 	backend := newTestBackend(t, genBlocks, genesis, ethash.NewFaker(), func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]

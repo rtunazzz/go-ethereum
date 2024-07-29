@@ -101,10 +101,10 @@ func (h *TerminalHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 // ResetFieldPadding zeroes the field-padding for all attribute pairs.
-func (t *TerminalHandler) ResetFieldPadding() {
-	t.mu.Lock()
-	t.fieldPadding = make(map[string]int)
-	t.mu.Unlock()
+func (h *TerminalHandler) ResetFieldPadding() {
+	h.mu.Lock()
+	h.fieldPadding = make(map[string]int)
+	h.mu.Unlock()
 }
 
 type leveler struct{ minLevel slog.Level }
@@ -118,7 +118,7 @@ func JSONHandler(wr io.Writer) slog.Handler {
 	return JSONHandlerWithLevel(wr, levelMaxVerbosity)
 }
 
-// JSONHandler returns a handler which prints records in JSON format that are less than or equal to
+// JSONHandlerWithLevel returns a handler which prints records in JSON format that are less than or equal to
 // the specified verbosity level.
 func JSONHandlerWithLevel(wr io.Writer, level slog.Level) slog.Handler {
 	return slog.NewJSONHandler(wr, &slog.HandlerOptions{
