@@ -507,33 +507,54 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			}
 		}
 
-	case 0x7e:
-		itx := LegacyTx{
-			Nonce:    0,
-			To:       &common.MaxAddress,
-			Value:    big.NewInt(0),
-			Gas:      0,
-			GasPrice: big.NewInt(0),
-			Data:     []byte{},
+	case DepositTxType:
+		if dec.AccessList != nil || dec.MaxFeePerGas != nil ||
+			dec.MaxPriorityFeePerGas != nil {
+			return errors.New("unexpected field(s) in deposit transaction")
 		}
+		if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(common.Big0) != 0 {
+			return errors.New("deposit transaction GasPrice must be 0")
+		}
+		if (dec.V != nil && dec.V.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.R != nil && dec.R.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.S != nil && dec.S.ToInt().Cmp(common.Big0) != 0) {
+			return errors.New("deposit transaction signature must be 0 or unset")
+		}
+		var itx DepositTx
 		inner = &itx
-
-		// signature R
-		if dec.R == nil {
-			return errors.New("missing required field 'r' in transaction")
+		if dec.To != nil {
+			itx.To = dec.To
 		}
-		itx.R = (*big.Int)(dec.R)
-		// signature S
-		if dec.S == nil {
-			return errors.New("missing required field 's' in transaction")
+		if dec.Gas == nil {
+			return errors.New("missing required field 'gas' for txdata")
 		}
-		itx.S = (*big.Int)(dec.S)
-		// signature V
-		if dec.V == nil {
-			return errors.New("missing required field 'v' in transaction")
+		itx.Gas = uint64(*dec.Gas)
+		if dec.Value == nil {
+			return errors.New("missing required field 'value' in transaction")
 		}
-		itx.V = (*big.Int)(dec.V)
-
+		itx.Value = (*big.Int)(dec.Value)
+		// mint may be omitted or nil if there is nothing to mint.
+		// itx.Mint = (*big.Int)(dec.Mint)
+		// if dec.Input == nil {
+		// 	return errors.New("missing required field 'input' in transaction")
+		// }
+		// itx.Data = *dec.Input
+		// if dec.From == nil {
+		// 	return errors.New("missing required field 'from' in transaction")
+		// }
+		// itx.From = *dec.From
+		// if dec.SourceHash == nil {
+		// 	return errors.New("missing required field 'sourceHash' in transaction")
+		// }
+		// itx.SourceHash = *dec.SourceHash
+		// // IsSystemTx may be omitted. Defaults to false.
+		// if dec.IsSystemTx != nil {
+		// 	itx.IsSystemTransaction = *dec.IsSystemTx
+		// }
+		//
+		// if dec.Nonce != nil {
+		// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
+		// }
 	default:
 		return ErrTxTypeNotSupported
 	}
