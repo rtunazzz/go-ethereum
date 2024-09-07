@@ -834,13 +834,11 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
 		// }
 	default:
-		// return ErrTxTypeNotSupported
+		return ErrTxTypeNotSupported
 	}
 
-	if inner != nil {
-		// Now set the inner transaction.
-		tx.setDecoded(inner, 0)
-	}
+	// Now set the inner transaction.
+	tx.setDecoded(inner, 0)
 
 	return nil
 }
