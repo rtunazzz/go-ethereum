@@ -10,10 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/eip712"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 )
 
 // ZKSyncTxType represents a L2 transaction type.
@@ -143,40 +140,6 @@ func (tx *ZKSyncTransaction) Decode(input []byte) error {
 	return nil
 }
 
-// TypedData transforms ZKSyncTransaction to apitypes.TypedData.
-func (tx *ZKSyncTransaction) TypedData() (*apitypes.TypedData, error) {
-	domain := eip712.ZkSyncEraEIP712Domain(tx.ChainID.Int64())
-	message, err := tx.typedDataMessage()
-	if err != nil {
-		return nil, err
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &apitypes.TypedData{
-		Types: apitypes.Types{
-			"Transaction": tx.types(),
-			domain.Type(): domain.Types(),
-		},
-		PrimaryType: "Transaction",
-		Domain:      domain.TypedData(),
-		Message:     message,
-	}, nil
-}
-
-// Hash gets the hash of the transaction.
-func (tx *ZKSyncTransaction) Hash() ([]byte, error) {
-	typedData, err := tx.TypedData()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get typed data: %w", err)
-	}
-	hash, err := tx.hashTypedData(*typedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hash of typed data: %w", err)
-	}
-	return hash, nil
-}
-
 // Copy creates a copy of the transaction.
 func (tx *ZKSyncTransaction) Copy() *ZKSyncTransaction {
 	if tx == nil {
@@ -232,70 +195,6 @@ func (tx *ZKSyncTransaction) Copy() *ZKSyncTransaction {
 	}
 
 	return cpy
-}
-
-func (tx *ZKSyncTransaction) hashTypedData(data apitypes.TypedData) ([]byte, error) {
-	domain, err := data.HashStruct("EIP712Domain", data.Domain.Map())
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hash of typed data domain: %w", err)
-	}
-	dataHash, err := data.HashStruct(data.PrimaryType, data.Message)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get hash of typed message: %w", err)
-	}
-	prefixedData := []byte(fmt.Sprintf("\x19\x01%s%s", string(domain), string(dataHash)))
-	prefixedDataHash := crypto.Keccak256(prefixedData)
-	return prefixedDataHash, nil
-}
-
-func (tx *ZKSyncTransaction) types() []apitypes.Type {
-	return []apitypes.Type{
-		{Name: "txType", Type: "uint256"},
-		{Name: "from", Type: "uint256"},
-		{Name: "to", Type: "uint256"},
-		{Name: "gasLimit", Type: "uint256"},
-		{Name: "gasPerPubdataByteLimit", Type: "uint256"},
-		{Name: "maxFeePerGas", Type: "uint256"},
-		{Name: "maxPriorityFeePerGas", Type: "uint256"},
-		{Name: "paymaster", Type: "uint256"},
-		{Name: "nonce", Type: "uint256"},
-		{Name: "value", Type: "uint256"},
-		{Name: "data", Type: "bytes"},
-		{Name: "factoryDeps", Type: "bytes32[]"},
-		{Name: "paymasterInput", Type: "bytes"},
-	}
-}
-
-func (tx *ZKSyncTransaction) typedDataMessage() (apitypes.TypedDataMessage, error) {
-	paymaster := big.NewInt(0)
-	paymasterInput := hexutil.Bytes{}
-	if tx.PaymasterParams != nil {
-		paymaster = big.NewInt(0).SetBytes(tx.PaymasterParams.Paymaster.Bytes())
-		paymasterInput = tx.PaymasterParams.PaymasterInput
-	}
-	value := `0x0`
-	if tx.Value != nil {
-		value = tx.Value.String()
-	}
-	factoryDepsHashes, err := tx.getFactoryDepsHashes()
-	if err != nil {
-		return nil, err
-	}
-	return apitypes.TypedDataMessage{
-		"txType":                 ZKSyncTxType,
-		"from":                   big.NewInt(0).SetBytes(tx.From.Bytes()).String(),
-		"to":                     big.NewInt(0).SetBytes(tx.To.Bytes()).String(),
-		"gasLimit":               tx.Gas.String(),
-		"gasPerPubdataByteLimit": tx.GasPerPubdata.String(),
-		"maxFeePerGas":           tx.GasFeeCap.String(),
-		"maxPriorityFeePerGas":   tx.GasTipCap.String(),
-		"paymaster":              paymaster.String(),
-		"nonce":                  tx.Nonce.String(),
-		"value":                  value,
-		"data":                   tx.Data,
-		"factoryDeps":            factoryDepsHashes,
-		"paymasterInput":         paymasterInput,
-	}, nil
 }
 
 func (tx *ZKSyncTransaction) MarshalJSON() ([]byte, error) {
