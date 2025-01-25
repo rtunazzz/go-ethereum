@@ -833,6 +833,33 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		// if dec.Nonce != nil {
 		// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
 		// }
+  case ZKSyncTxType:
+		if dec.AccessList != nil || dec.MaxFeePerGas != nil ||
+			dec.MaxPriorityFeePerGas != nil {
+			return errors.New("unexpected field(s) in deposit transaction")
+		}
+		if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(common.Big0) != 0 {
+			return errors.New("deposit transaction GasPrice must be 0")
+		}
+		if (dec.V != nil && dec.V.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.R != nil && dec.R.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.S != nil && dec.S.ToInt().Cmp(common.Big0) != 0) {
+			return errors.New("deposit transaction signature must be 0 or unset")
+		}
+		var itx ZKSyncTransaction
+		inner = &itx
+		if dec.To != nil {
+			itx.To = dec.To
+		}
+		// if dec.Gas == nil {
+		// 	return errors.New("missing required field 'gas' for txdata")
+		// }
+		// itx.Gas = uint64(*dec.Gas)
+		if dec.Value == nil {
+			return errors.New("missing required field 'value' in transaction")
+		}
+		itx.Value = (*big.Int)(dec.Value)
+
 	default:
 		return ErrTxTypeNotSupported
 	}
