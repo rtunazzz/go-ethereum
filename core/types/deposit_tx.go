@@ -25,6 +25,7 @@ import (
 )
 
 const DepositTxType = 0x7E
+const DepositTxType2 = 0xff
 
 type DepositTx struct {
 	// SourceHash uniquely identifies the source of the deposit

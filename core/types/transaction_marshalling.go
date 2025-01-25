@@ -833,7 +833,7 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 	// if dec.Nonce != nil {
 	// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
 	// }
-	case ZKSyncTxType:
+	case ZKSyncTxType, DepositTxType2:
 		var itx ZKSyncTransaction
 		inner = &itx
 		if dec.ChainID == nil {
