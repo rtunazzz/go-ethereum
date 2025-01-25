@@ -811,54 +811,78 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'value' in transaction")
 		}
 		itx.Value = (*big.Int)(dec.Value)
-		// mint may be omitted or nil if there is nothing to mint.
-		// itx.Mint = (*big.Int)(dec.Mint)
-		// if dec.Input == nil {
-		// 	return errors.New("missing required field 'input' in transaction")
-		// }
-		// itx.Data = *dec.Input
-		// if dec.From == nil {
-		// 	return errors.New("missing required field 'from' in transaction")
-		// }
-		// itx.From = *dec.From
-		// if dec.SourceHash == nil {
-		// 	return errors.New("missing required field 'sourceHash' in transaction")
-		// }
-		// itx.SourceHash = *dec.SourceHash
-		// // IsSystemTx may be omitted. Defaults to false.
-		// if dec.IsSystemTx != nil {
-		// 	itx.IsSystemTransaction = *dec.IsSystemTx
-		// }
-		//
-		// if dec.Nonce != nil {
-		// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
-		// }
-  case ZKSyncTxType:
-		if dec.AccessList != nil || dec.MaxFeePerGas != nil ||
-			dec.MaxPriorityFeePerGas != nil {
-			return errors.New("unexpected field(s) in deposit transaction")
-		}
-		if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(common.Big0) != 0 {
-			return errors.New("deposit transaction GasPrice must be 0")
-		}
-		if (dec.V != nil && dec.V.ToInt().Cmp(common.Big0) != 0) ||
-			(dec.R != nil && dec.R.ToInt().Cmp(common.Big0) != 0) ||
-			(dec.S != nil && dec.S.ToInt().Cmp(common.Big0) != 0) {
-			return errors.New("deposit transaction signature must be 0 or unset")
-		}
+	// mint may be omitted or nil if there is nothing to mint.
+	// itx.Mint = (*big.Int)(dec.Mint)
+	// if dec.Input == nil {
+	// 	return errors.New("missing required field 'input' in transaction")
+	// }
+	// itx.Data = *dec.Input
+	// if dec.From == nil {
+	// 	return errors.New("missing required field 'from' in transaction")
+	// }
+	// itx.From = *dec.From
+	// if dec.SourceHash == nil {
+	// 	return errors.New("missing required field 'sourceHash' in transaction")
+	// }
+	// itx.SourceHash = *dec.SourceHash
+	// // IsSystemTx may be omitted. Defaults to false.
+	// if dec.IsSystemTx != nil {
+	// 	itx.IsSystemTransaction = *dec.IsSystemTx
+	// }
+	//
+	// if dec.Nonce != nil {
+	// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
+	// }
+	case ZKSyncTxType:
 		var itx ZKSyncTransaction
 		inner = &itx
-		if dec.To != nil {
-			itx.To = dec.To
+		if dec.ChainID == nil {
+			return errors.New("missing required field 'chainId' in transaction")
 		}
-		// if dec.Gas == nil {
-		// 	return errors.New("missing required field 'gas' for txdata")
-		// }
-		// itx.Gas = uint64(*dec.Gas)
+		itx.ChainID = (*big.Int)(dec.ChainID)
+		if dec.Nonce == nil {
+			return errors.New("missing required field 'nonce' in transaction")
+		}
+		itx.Nonce = new(big.Int).SetUint64(uint64(*dec.Nonce))
+		itx.To = dec.To
+		if dec.Gas == nil {
+			return errors.New("missing required field 'gas' for txdata")
+		}
+		itx.Gas = new(big.Int).SetUint64(uint64(*dec.Gas))
+		if dec.MaxPriorityFeePerGas == nil {
+			return errors.New("missing required field 'maxPriorityFeePerGas' for txdata")
+		}
+		itx.GasTipCap = (*big.Int)(dec.MaxPriorityFeePerGas)
+		if dec.MaxFeePerGas == nil {
+			return errors.New("missing required field 'maxFeePerGas' for txdata")
+		}
+		itx.GasFeeCap = (*big.Int)(dec.MaxFeePerGas)
 		if dec.Value == nil {
 			return errors.New("missing required field 'value' in transaction")
 		}
 		itx.Value = (*big.Int)(dec.Value)
+		if dec.Input == nil {
+			return errors.New("missing required field 'input' in transaction")
+		}
+		itx.Data = *dec.Input
+		if dec.From == nil {
+			return errors.New("missing required field 'from' in transaction")
+		}
+		itx.From = dec.From
+
+		// Custom ZKSync fields
+		// if dec.FactoryDeps != nil {
+		// 	itx.FactoryDeps = dec.FactoryDeps
+		// }
+		// if len(dec.CustomSignature) > 0 {
+		// 	itx.CustomSignature = dec.CustomSignature
+		// }
+		// if dec.PaymasterParams != nil {
+		// 	itx.PaymasterParams = &PaymasterParams{
+		// 		Paymaster:      dec.PaymasterParams.Paymaster,
+		// 		PaymasterInput: dec.PaymasterParams.PaymasterInput,
+		// 	}
+		// }
 
 	default:
 		return ErrTxTypeNotSupported
