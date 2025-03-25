@@ -624,6 +624,7 @@ func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rp
 type ChainContextBackend interface {
 	Engine() consensus.Engine
 	HeaderByNumber(context.Context, rpc.BlockNumber) (*types.Header, error)
+	ChainConfig() *params.ChainConfig
 }
 
 // ChainContext is an implementation of core.ChainContext. It's main use-case
@@ -652,10 +653,16 @@ func (context *ChainContext) GetHeader(hash common.Hash, number uint64) *types.H
 	return header
 }
 
+func (context *ChainContext) Config() *params.ChainConfig {
+	return context.b.ChainConfig()
+}
+
 func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, overrides *override.StateOverride, blockOverrides *override.BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
 	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil)
 	if blockOverrides != nil {
-		blockOverrides.Apply(&blockCtx)
+		if err := blockOverrides.Apply(&blockCtx); err != nil {
+			return nil, err
+		}
 	}
 	rules := b.ChainConfig().Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time)
 	precompiles := vm.ActivePrecompiledContracts(rules)
@@ -756,8 +763,7 @@ func (api *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockN
 	if err != nil {
 		return nil, err
 	}
-	// If the result contains a revert reason, try to unpack and return it.
-	if len(result.Revert()) > 0 {
+	if errors.Is(result.Err, vm.ErrExecutionReverted) {
 		return nil, newRevertError(result.Revert())
 	}
 	return result.Return(), result.Err
@@ -770,7 +776,7 @@ func (api *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockN
 //
 // Note, this function doesn't make any changes in the state/blockchain and is
 // useful to execute and retrieve values.
-func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrOrHash *rpc.BlockNumberOrHash) ([]map[string]interface{}, error) {
+func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrOrHash *rpc.BlockNumberOrHash) ([]*simBlockResult, error) {
 	if len(opts.BlockStateCalls) == 0 {
 		return nil, &invalidParamsError{message: "empty input"}
 	} else if len(opts.BlockStateCalls) > maxSimulateBlocks {
@@ -837,7 +843,7 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	// Run the gas estimation and wrap any revertals into a custom return
 	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
 	if err != nil {
-		if len(revert) > 0 {
+		if errors.Is(err, vm.ErrExecutionReverted) {
 			return 0, newRevertError(revert)
 		}
 		return 0, err
@@ -1160,10 +1166,33 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 	// Retrieve the precompiles since they don't need to be added to the access list
 	precompiles := vm.ActivePrecompiles(b.ChainConfig().Rules(header.Number, isPostMerge, header.Time))
 
+	// addressesToExclude contains sender, receiver, precompiles and valid authorizations
+	addressesToExclude := map[common.Address]struct{}{args.from(): {}, to: {}}
+	for _, addr := range precompiles {
+		addressesToExclude[addr] = struct{}{}
+	}
+
+	// Prevent redundant operations if args contain more authorizations than EVM may handle
+	maxAuthorizations := uint64(*args.Gas) / params.CallNewAccountGas
+	if uint64(len(args.AuthorizationList)) > maxAuthorizations {
+		return nil, 0, nil, errors.New("insufficient gas to process all authorizations")
+	}
+
+	for _, auth := range args.AuthorizationList {
+		// Duplicating stateTransition.validateAuthorization() logic
+		if (!auth.ChainID.IsZero() && auth.ChainID.CmpBig(b.ChainConfig().ChainID) != 0) || auth.Nonce+1 < auth.Nonce {
+			continue
+		}
+
+		if authority, err := auth.Authority(); err == nil {
+			addressesToExclude[authority] = struct{}{}
+		}
+	}
+
 	// Create an initial tracer
-	prevTracer := logger.NewAccessListTracer(nil, args.from(), to, precompiles)
+	prevTracer := logger.NewAccessListTracer(nil, addressesToExclude)
 	if args.AccessList != nil {
-		prevTracer = logger.NewAccessListTracer(*args.AccessList, args.from(), to, precompiles)
+		prevTracer = logger.NewAccessListTracer(*args.AccessList, addressesToExclude)
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1180,7 +1209,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		msg := args.ToMessage(header.BaseFee, true, true)
 
 		// Apply the transaction with the access list tracer
-		tracer := logger.NewAccessListTracer(accessList, args.from(), to, precompiles)
+		tracer := logger.NewAccessListTracer(accessList, addressesToExclude)
 		config := vm.Config{Tracer: tracer.Hooks(), NoBaseFee: true}
 		evm := b.GetEVM(ctx, statedb, header, &config, nil)
 
@@ -1670,7 +1699,7 @@ func (api *DebugAPI) GetRawHeader(ctx context.Context, blockNrOrHash rpc.BlockNu
 		hash = h
 	} else {
 		block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if err != nil {
+		if block == nil || err != nil {
 			return nil, err
 		}
 		hash = block.Hash()
@@ -1689,7 +1718,7 @@ func (api *DebugAPI) GetRawBlock(ctx context.Context, blockNrOrHash rpc.BlockNum
 		hash = h
 	} else {
 		block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if err != nil {
+		if block == nil || err != nil {
 			return nil, err
 		}
 		hash = block.Hash()
@@ -1708,7 +1737,7 @@ func (api *DebugAPI) GetRawReceipts(ctx context.Context, blockNrOrHash rpc.Block
 		hash = h
 	} else {
 		block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if err != nil {
+		if block == nil || err != nil {
 			return nil, err
 		}
 		hash = block.Hash()
