@@ -85,6 +85,21 @@ func (tx *DepositTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int 
 	return dst.Set(new(big.Int))
 }
 
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *DepositTx) sigHash(chainID *big.Int) common.Hash {
+    return rlpHash([]any{
+        tx.SourceHash,
+        tx.From,
+        tx.To,
+        tx.Mint,
+        tx.Value,
+        tx.Gas,
+        tx.IsSystemTransaction,
+        tx.Data,
+        chainID, uint(0), uint(0), // EIP-155 values
+    })
+}
+
 func (tx *DepositTx) effectiveNonce() *uint64 { return nil }
 
 func (tx *DepositTx) rawSignatureValues() (v, r, s *big.Int) {
