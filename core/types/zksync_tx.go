@@ -305,6 +305,25 @@ func (tx *ZKSyncTransaction) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *
 	return dst.Set(effectivePrice)
 }
 
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *ZKSyncTransaction) sigHash(chainID *big.Int) common.Hash {
+    return rlpHash([]any{
+        tx.Nonce,
+        tx.GasTipCap,
+        tx.GasFeeCap,
+        tx.Gas,
+        tx.To,
+        tx.Value,
+        tx.Data,
+        tx.ChainID,
+        tx.From,
+        tx.GasPerPubdata,
+        tx.FactoryDeps,
+        tx.PaymasterParams,
+        chainID, uint(0), uint(0), // EIP-155 values
+    })
+}
+
 func (tx *ZKSyncTransaction) encode(w *bytes.Buffer) error {
 	encoded, err := tx.Encode(nil)
 	if err != nil {
