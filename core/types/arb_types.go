@@ -17,15 +17,16 @@ import (
 // Returns true if nonce checks should be skipped based on inner's isFake()
 // This also disables requiring that sender is an EOA and not a contract
 func (tx *Transaction) SkipAccountChecks() bool {
-  return false
+	return false
 	// return tx.inner.skipAccountChecks()
 }
 
-type fallbackError struct {
-}
+type fallbackError struct{}
 
-var fallbackErrorMsg = "missing trie node 0000000000000000000000000000000000000000000000000000000000000000 (path ) <nil>"
-var fallbackErrorCode = -32000
+var (
+	fallbackErrorMsg  = "missing trie node 0000000000000000000000000000000000000000000000000000000000000000 (path ) <nil>"
+	fallbackErrorCode = -32000
+)
 
 func SetFallbackError(msg string, code int) {
 	fallbackErrorMsg = msg
@@ -108,6 +109,7 @@ func (tx *ArbitrumUnsignedTx) to() *common.Address    { return tx.To }
 func (tx *ArbitrumUnsignedTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, tx)
 }
+
 func (tx *ArbitrumUnsignedTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
 }
@@ -117,7 +119,6 @@ func (tx *ArbitrumUnsignedTx) rawSignatureValues() (v, r, s *big.Int) {
 }
 
 func (tx *ArbitrumUnsignedTx) setSignatureValues(chainID, v, r, s *big.Int) {
-
 }
 
 func (tx *ArbitrumUnsignedTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
@@ -125,6 +126,18 @@ func (tx *ArbitrumUnsignedTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) 
 		return dst.Set(tx.GasFeeCap)
 	}
 	return dst.Set(baseFee)
+}
+
+func (tx *ArbitrumUnsignedTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.Nonce,
+		tx.GasFeeCap,
+		tx.Gas,
+		tx.To,
+		tx.Value,
+		tx.Data,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 type ArbitrumContractTx struct {
@@ -181,6 +194,7 @@ func (tx *ArbitrumContractTx) to() *common.Address    { return tx.To }
 func (tx *ArbitrumContractTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, tx)
 }
+
 func (tx *ArbitrumContractTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
 }
@@ -195,6 +209,19 @@ func (tx *ArbitrumContractTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) 
 		return dst.Set(tx.GasFeeCap)
 	}
 	return dst.Set(baseFee)
+}
+
+func (tx *ArbitrumContractTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.RequestId,
+		tx.From,
+		tx.GasFeeCap,
+		tx.Gas,
+		tx.To,
+		tx.Value,
+		tx.Data,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 type ArbitrumRetryTx struct {
@@ -265,6 +292,7 @@ func (tx *ArbitrumRetryTx) to() *common.Address    { return tx.To }
 func (tx *ArbitrumRetryTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, tx)
 }
+
 func (tx *ArbitrumRetryTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
 }
@@ -279,6 +307,24 @@ func (tx *ArbitrumRetryTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *bi
 		return dst.Set(tx.GasFeeCap)
 	}
 	return dst.Set(baseFee)
+}
+
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *ArbitrumRetryTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.Nonce,
+		tx.From,
+		tx.GasFeeCap,
+		tx.Gas,
+		tx.To,
+		tx.Value,
+		tx.Data,
+		tx.TicketId,
+		tx.RefundTo,
+		tx.MaxRefund,
+		tx.SubmissionFeeRefund,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 type ArbitrumSubmitRetryableTx struct {
@@ -353,6 +399,7 @@ func (tx *ArbitrumSubmitRetryableTx) to() *common.Address    { return &ArbRetrya
 func (tx *ArbitrumSubmitRetryableTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, tx)
 }
+
 func (tx *ArbitrumSubmitRetryableTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
 }
@@ -367,6 +414,25 @@ func (tx *ArbitrumSubmitRetryableTx) effectiveGasPrice(dst *big.Int, baseFee *bi
 		return dst.Set(tx.GasFeeCap)
 	}
 	return dst.Set(baseFee)
+}
+
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *ArbitrumSubmitRetryableTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.RequestId,
+		tx.From,
+		tx.L1BaseFee,
+		tx.DepositValue,
+		tx.GasFeeCap,
+		tx.Gas,
+		tx.RetryTo,
+		tx.RetryValue,
+		tx.Beneficiary,
+		tx.MaxSubmissionFee,
+		tx.FeeRefundAddr,
+		tx.RetryData,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 func (tx *ArbitrumSubmitRetryableTx) data() []byte {
@@ -442,6 +508,7 @@ func (d *ArbitrumDepositTx) to() *common.Address    { return &d.To }
 func (d *ArbitrumDepositTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, d)
 }
+
 func (d *ArbitrumDepositTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, d)
 }
@@ -451,11 +518,21 @@ func (d *ArbitrumDepositTx) rawSignatureValues() (v, r, s *big.Int) {
 }
 
 func (d *ArbitrumDepositTx) setSignatureValues(chainID, v, r, s *big.Int) {
-
 }
 
 func (tx *ArbitrumDepositTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
 	return dst.Set(bigZero)
+}
+
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *ArbitrumDepositTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.L1RequestId,
+		tx.From,
+		tx.To,
+		tx.Value,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 type ArbitrumInternalTx struct {
@@ -487,6 +564,7 @@ func (t *ArbitrumInternalTx) to() *common.Address    { return &ArbosAddress }
 func (t *ArbitrumInternalTx) encode(b *bytes.Buffer) error {
 	return rlp.Encode(b, t)
 }
+
 func (t *ArbitrumInternalTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, t)
 }
@@ -496,11 +574,18 @@ func (d *ArbitrumInternalTx) rawSignatureValues() (v, r, s *big.Int) {
 }
 
 func (d *ArbitrumInternalTx) setSignatureValues(chainID, v, r, s *big.Int) {
-
 }
 
 func (tx *ArbitrumInternalTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
 	return dst.Set(bigZero)
+}
+
+// sigHash returns the hash of the transaction that is ought to be signed
+func (tx *ArbitrumInternalTx) sigHash(chainID *big.Int) common.Hash {
+	return rlpHash([]any{
+		tx.Data,
+		chainID, uint(0), uint(0), // EIP-155 values
+	})
 }
 
 type HeaderInfo struct {
