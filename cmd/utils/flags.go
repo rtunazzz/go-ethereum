@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -246,6 +245,16 @@ var (
 	OverrideOsaka = &cli.Uint64Flag{
 		Name:     "override.osaka",
 		Usage:    "Manually specify the Osaka fork timestamp, overriding the bundled setting",
+		Category: flags.EthCategory,
+	}
+	OverrideBPO1 = &cli.Uint64Flag{
+		Name:     "override.bpo1",
+		Usage:    "Manually specify the bpo1 fork timestamp, overriding the bundled setting",
+		Category: flags.EthCategory,
+	}
+	OverrideBPO2 = &cli.Uint64Flag{
+		Name:     "override.bpo2",
+		Usage:    "Manually specify the bpo2 fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
 	OverrideVerkle = &cli.Uint64Flag{
@@ -571,6 +580,16 @@ var (
 		Value:    "{}",
 		Category: flags.VMCategory,
 	}
+	VMWitnessStatsFlag = &cli.BoolFlag{
+		Name:     "vmwitnessstats",
+		Usage:    "Enable collection of witness trie access statistics (automatically enables witness generation)",
+		Category: flags.VMCategory,
+	}
+	VMStatelessSelfValidationFlag = &cli.BoolFlag{
+		Name:     "stateless-self-validation",
+		Usage:    "Generate execution witnesses and self-check against them (testing purpose)",
+		Category: flags.VMCategory,
+	}
 	// API options.
 	RPCGlobalGasCapFlag = &cli.Uint64Flag{
 		Name:     "rpc.gascap",
@@ -588,6 +607,12 @@ var (
 		Name:     "rpc.txfeecap",
 		Usage:    "Sets a cap on transaction fee (in ether) that can be sent via the RPC APIs (0 = no cap)",
 		Value:    ethconfig.Defaults.RPCTxFeeCap,
+		Category: flags.APICategory,
+	}
+	RPCGlobalLogQueryLimit = &cli.IntFlag{
+		Name:     "rpc.logquerylimit",
+		Usage:    "Maximum number of alternative addresses or topics allowed per search position in eth_getLogs filter criteria (0 = no cap)",
+		Value:    ethconfig.Defaults.LogQueryLimit,
 		Category: flags.APICategory,
 	}
 	// Authenticated RPC HTTP settings
@@ -1594,7 +1619,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	// Ensure Go's GC ignores the database cache for trigger percentage
 	cache := ctx.Int(CacheFlag.Name)
-	gogc := math.Max(20, math.Min(100, 100/(float64(cache)/1024)))
+	gogc := max(20, min(100, 100/(float64(cache)/1024)))
 
 	log.Debug("Sanitizing Go's GC trigger", "percent", int(gogc))
 	godebug.SetGCPercent(int(gogc))
@@ -1689,6 +1714,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(CacheLogSizeFlag.Name) {
 		cfg.FilterLogCacheSize = ctx.Int(CacheLogSizeFlag.Name)
 	}
+	if ctx.IsSet(RPCGlobalLogQueryLimit.Name) {
+		cfg.LogQueryLimit = ctx.Int(RPCGlobalLogQueryLimit.Name)
+	}
 	if !ctx.Bool(SnapshotFlag.Name) || cfg.SnapshotCache == 0 {
 		// If snap-sync is requested, this flag is also required
 		if cfg.SyncMode == ethconfig.SnapSync {
@@ -1706,6 +1734,16 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(VMEnableDebugFlag.Name) {
 		cfg.EnablePreimageRecording = ctx.Bool(VMEnableDebugFlag.Name)
+	}
+	if ctx.IsSet(VMWitnessStatsFlag.Name) {
+		cfg.EnableWitnessStats = ctx.Bool(VMWitnessStatsFlag.Name)
+	}
+	if ctx.IsSet(VMStatelessSelfValidationFlag.Name) {
+		cfg.StatelessSelfValidation = ctx.Bool(VMStatelessSelfValidationFlag.Name)
+	}
+	// Auto-enable StatelessSelfValidation when witness stats are enabled
+	if ctx.Bool(VMWitnessStatsFlag.Name) {
+		cfg.StatelessSelfValidation = true
 	}
 
 	if ctx.IsSet(RPCGlobalGasCapFlag.Name) {
@@ -1902,11 +1940,15 @@ func MakeBeaconLightConfig(ctx *cli.Context) bparams.ClientConfig {
 		} else {
 			Fatalf("Could not parse --%s: %v", BeaconGenesisRootFlag.Name, err)
 		}
-		configFile := ctx.String(BeaconConfigFlag.Name)
-		if err := config.ChainConfig.LoadForks(configFile); err != nil {
-			Fatalf("Could not load beacon chain config '%s': %v", configFile, err)
+		configPath := ctx.String(BeaconConfigFlag.Name)
+		file, err := os.ReadFile(configPath)
+		if err != nil {
+			Fatalf("failed to read beacon chain config file '%s': %v", configPath, err)
 		}
-		log.Info("Using custom beacon chain config", "file", configFile)
+		if err := config.ChainConfig.LoadForks(file); err != nil {
+			Fatalf("Could not load beacon chain config '%s': %v", configPath, err)
+		}
+		log.Info("Using custom beacon chain config", "file", configPath)
 	} else {
 		if ctx.IsSet(BeaconGenesisRootFlag.Name) {
 			Fatalf("Genesis root is specified but custom beacon chain config is missing")
@@ -1997,7 +2039,8 @@ func RegisterGraphQLService(stack *node.Node, backend ethapi.Backend, filterSyst
 // RegisterFilterAPI adds the eth log filtering RPC API to the node.
 func RegisterFilterAPI(stack *node.Node, backend ethapi.Backend, ethcfg *ethconfig.Config) *filters.FilterSystem {
 	filterSystem := filters.NewFilterSystem(backend, filters.Config{
-		LogCacheSize: ethcfg.FilterLogCacheSize,
+		LogCacheSize:  ethcfg.FilterLogCacheSize,
+		LogQueryLimit: ethcfg.LogQueryLimit,
 	})
 	stack.RegisterAPIs([]rpc.API{{
 		Namespace: "eth",
@@ -2243,6 +2286,8 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	}
 	vmcfg := vm.Config{
 		EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name),
+		EnableWitnessStats:      ctx.Bool(VMWitnessStatsFlag.Name),
+		StatelessSelfValidation: ctx.Bool(VMStatelessSelfValidationFlag.Name) || ctx.Bool(VMWitnessStatsFlag.Name),
 	}
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {

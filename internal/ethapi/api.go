@@ -449,21 +449,21 @@ func decodeHash(s string) (h common.Hash, inputLength int, err error) {
 	if (len(s) & 1) > 0 {
 		s = "0" + s
 	}
+	if len(s) > 64 {
+		return common.Hash{}, len(s) / 2, errors.New("hex string too long, want at most 32 bytes")
+	}
 	b, err := hex.DecodeString(s)
 	if err != nil {
 		return common.Hash{}, 0, errors.New("hex string invalid")
-	}
-	if len(b) > 32 {
-		return common.Hash{}, len(b), errors.New("hex string too long, want at most 32 bytes")
 	}
 	return common.BytesToHash(b), len(b), nil
 }
 
 // GetHeaderByNumber returns the requested canonical block header.
-//   - When blockNr is -1 the chain pending header is returned.
-//   - When blockNr is -2 the chain latest header is returned.
-//   - When blockNr is -3 the chain finalized header is returned.
-//   - When blockNr is -4 the chain safe header is returned.
+//   - When number is -1 the chain pending header is returned.
+//   - When number is -2 the chain latest header is returned.
+//   - When number is -3 the chain finalized header is returned.
+//   - When number is -4 the chain safe header is returned.
 func (api *BlockChainAPI) GetHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (map[string]interface{}, error) {
 	header, err := api.b.HeaderByNumber(ctx, number)
 	if header != nil && err == nil {
@@ -489,10 +489,10 @@ func (api *BlockChainAPI) GetHeaderByHash(ctx context.Context, hash common.Hash)
 }
 
 // GetBlockByNumber returns the requested canonical block.
-//   - When blockNr is -1 the chain pending block is returned.
-//   - When blockNr is -2 the chain latest block is returned.
-//   - When blockNr is -3 the chain finalized block is returned.
-//   - When blockNr is -4 the chain safe block is returned.
+//   - When number is -1 the chain pending block is returned.
+//   - When number is -2 the chain latest block is returned.
+//   - When number is -3 the chain finalized block is returned.
+//   - When number is -4 the chain safe block is returned.
 //   - When fullTx is true all transactions in the block are returned, otherwise
 //     only the transaction hash is returned.
 func (api *BlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
@@ -699,15 +699,15 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	} else {
 		gp.AddGas(globalGasCap)
 	}
-	return applyMessage(ctx, b, args, state, header, timeout, gp, &blockCtx, &vm.Config{NoBaseFee: true}, precompiles, true)
+	return applyMessage(ctx, b, args, state, header, timeout, gp, &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
 }
 
-func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts, skipChecks bool) (*core.ExecutionResult, error) {
+func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts) (*core.ExecutionResult, error) {
 	// Get a new instance of the EVM.
 	if err := args.CallDefaults(gp.Gas(), blockContext.BaseFee, b.ChainConfig().ChainID); err != nil {
 		return nil, err
 	}
-	msg := args.ToMessage(header.BaseFee, skipChecks, skipChecks)
+	msg := args.ToMessage(header.BaseFee, true)
 	// Lower the basefee to 0 to avoid breaking EVM
 	// invariants (basefee < feecap).
 	if msg.GasPrice.Sign() == 0 {
@@ -858,7 +858,7 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	if err := args.CallDefaults(gasCap, header.BaseFee, b.ChainConfig().ChainID); err != nil {
 		return 0, err
 	}
-	call := args.ToMessage(header.BaseFee, true, true)
+	call := args.ToMessage(header.BaseFee, true)
 
 	// Run the gas estimation and wrap any revertals into a custom return
 	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
@@ -1301,7 +1301,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		statedb := db.Copy()
 		// Set the accesslist to the last al
 		args.AccessList = &accessList
-		msg := args.ToMessage(header.BaseFee, true, true)
+		msg := args.ToMessage(header.BaseFee, true)
 
 		// Apply the transaction with the access list tracer
 		tracer := logger.NewAccessListTracer(accessList, addressesToExclude)
