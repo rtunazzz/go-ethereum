@@ -55,6 +55,7 @@ import (
 const estimateGasErrorRatio = 0.015
 
 var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
+var errSubClosed = errors.New("chain subscription closed")
 
 // EthereumAPI provides an API to access Ethereum related information.
 type EthereumAPI struct {
@@ -627,7 +628,7 @@ func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rp
 
 	result := make([]map[string]interface{}, len(receipts))
 	for i, receipt := range receipts {
-		result[i] = marshalReceipt(receipt, block.Hash(), block.NumberU64(), signer, txs[i], i)
+		result[i] = MarshalReceipt(receipt, block.Hash(), block.NumberU64(), signer, txs[i], i)
 	}
 	return result, nil
 }
@@ -636,6 +637,8 @@ func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rp
 type ChainContextBackend interface {
 	Engine() consensus.Engine
 	HeaderByNumber(context.Context, rpc.BlockNumber) (*types.Header, error)
+	HeaderByHash(context.Context, common.Hash) (*types.Header, error)
+	CurrentHeader() *types.Header
 	ChainConfig() *params.ChainConfig
 }
 
@@ -667,6 +670,20 @@ func (context *ChainContext) GetHeader(hash common.Hash, number uint64) *types.H
 
 func (context *ChainContext) Config() *params.ChainConfig {
 	return context.b.ChainConfig()
+}
+
+func (context *ChainContext) CurrentHeader() *types.Header {
+	return context.b.CurrentHeader()
+}
+
+func (context *ChainContext) GetHeaderByNumber(number uint64) *types.Header {
+	header, _ := context.b.HeaderByNumber(context.ctx, rpc.BlockNumber(number))
+	return header
+}
+
+func (context *ChainContext) GetHeaderByHash(hash common.Hash) *types.Header {
+	header, _ := context.b.HeaderByHash(context.ctx, hash)
+	return header
 }
 
 func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, overrides *override.StateOverride, blockOverrides *override.BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
@@ -1472,11 +1489,11 @@ func (api *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash commo
 		return nil, err
 	}
 	// Derive the sender.
-	return marshalReceipt(receipt, blockHash, blockNumber, api.signer, tx, int(index)), nil
+	return MarshalReceipt(receipt, blockHash, blockNumber, api.signer, tx, int(index)), nil
 }
 
-// marshalReceipt marshals a transaction receipt into a JSON object.
-func marshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber uint64, signer types.Signer, tx *types.Transaction, txIndex int) map[string]interface{} {
+// MarshalReceipt marshals a transaction receipt into a JSON object.
+func MarshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber uint64, signer types.Signer, tx *types.Transaction, txIndex int) map[string]interface{} {
 	from, _ := types.Sender(signer, tx)
 
 	fields := map[string]interface{}{
@@ -1603,16 +1620,9 @@ func (api *TransactionAPI) SendTransaction(ctx context.Context, args Transaction
 // processing (signing + broadcast).
 func (api *TransactionAPI) FillTransaction(ctx context.Context, args TransactionArgs) (*SignTransactionResult, error) {
 	// Set some sanity defaults and terminate on failure
-	sidecarVersion := types.BlobSidecarVersion0
-	if len(args.Blobs) > 0 {
-		h := api.b.CurrentHeader()
-		if api.b.ChainConfig().IsOsaka(h.Number, h.Time) {
-			sidecarVersion = types.BlobSidecarVersion1
-		}
-	}
 	config := sidecarConfig{
 		blobSidecarAllowed: true,
-		blobSidecarVersion: sidecarVersion,
+		blobSidecarVersion: api.currentBlobSidecarVersion(),
 	}
 	if err := args.setDefaults(ctx, api.b, config); err != nil {
 		return nil, err
@@ -1626,6 +1636,14 @@ func (api *TransactionAPI) FillTransaction(ctx context.Context, args Transaction
 	return &SignTransactionResult{data, tx}, nil
 }
 
+func (api *TransactionAPI) currentBlobSidecarVersion() byte {
+	h := api.b.CurrentHeader()
+	if api.b.ChainConfig().IsOsaka(h.Number, h.Time) {
+		return types.BlobSidecarVersion1
+	}
+	return types.BlobSidecarVersion0
+}
+
 // SendRawTransaction will add the signed transaction to the transaction pool.
 // The sender is responsible for signing the transaction and using the correct nonce.
 func (api *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
@@ -1633,7 +1651,106 @@ func (api *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil
 	if err := tx.UnmarshalBinary(input); err != nil {
 		return common.Hash{}, err
 	}
+
+	// Convert legacy blob transaction proofs.
+	// TODO: remove in go-ethereum v1.17.x
+	if sc := tx.BlobTxSidecar(); sc != nil {
+		exp := api.currentBlobSidecarVersion()
+		if sc.Version == types.BlobSidecarVersion0 && exp == types.BlobSidecarVersion1 {
+			if err := sc.ToV1(); err != nil {
+				return common.Hash{}, fmt.Errorf("blob sidecar conversion failed: %v", err)
+			}
+			tx = tx.WithBlobTxSidecar(sc)
+		}
+	}
+
 	return SubmitTransaction(ctx, api.b, tx)
+}
+
+// SendRawTransactionSync will add the signed transaction to the transaction pool
+// and wait until the transaction has been included in a block and return the receipt, or the timeout.
+func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hexutil.Bytes, timeoutMs *hexutil.Uint64) (map[string]interface{}, error) {
+	tx := new(types.Transaction)
+	if err := tx.UnmarshalBinary(input); err != nil {
+		return nil, err
+	}
+
+	ch := make(chan core.ChainEvent, 128)
+	sub := api.b.SubscribeChainEvent(ch)
+	subErrCh := sub.Err()
+	defer sub.Unsubscribe()
+
+	hash, err := SubmitTransaction(ctx, api.b, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	maxTimeout := api.b.RPCTxSyncMaxTimeout()
+	defaultTimeout := api.b.RPCTxSyncDefaultTimeout()
+
+	timeout := defaultTimeout
+	if timeoutMs != nil && *timeoutMs > 0 {
+		req := time.Duration(*timeoutMs) * time.Millisecond
+		if req > maxTimeout {
+			timeout = maxTimeout
+		} else {
+			timeout = req
+		}
+	}
+
+	receiptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Fast path.
+	if r, err := api.GetTransactionReceipt(receiptCtx, hash); err == nil && r != nil {
+		return r, nil
+	}
+
+	for {
+		select {
+		case <-receiptCtx.Done():
+			// If server-side wait window elapsed, return the structured timeout.
+			if errors.Is(receiptCtx.Err(), context.DeadlineExceeded) {
+				return nil, &txSyncTimeoutError{
+					msg:  fmt.Sprintf("The transaction was added to the transaction pool but wasn't processed in %v.", timeout),
+					hash: hash,
+				}
+			}
+			return nil, receiptCtx.Err()
+
+		case err, ok := <-subErrCh:
+			if !ok {
+				return nil, errSubClosed
+			}
+			return nil, err
+
+		case ev, ok := <-ch:
+			if !ok {
+				return nil, errSubClosed
+			}
+			rs := ev.Receipts
+			txs := ev.Transactions
+			if len(rs) == 0 || len(rs) != len(txs) {
+				continue
+			}
+			for i := range rs {
+				if rs[i].TxHash == hash {
+					if rs[i].BlockNumber != nil && rs[i].BlockHash != (common.Hash{}) {
+						signer := types.LatestSigner(api.b.ChainConfig())
+						return MarshalReceipt(
+							rs[i],
+							rs[i].BlockHash,
+							rs[i].BlockNumber.Uint64(),
+							signer,
+							txs[i],
+							int(rs[i].TransactionIndex),
+						), nil
+					}
+					return api.GetTransactionReceipt(receiptCtx, hash)
+				}
+			}
+		}
+	}
 }
 
 // Sign calculates an ECDSA signature for:

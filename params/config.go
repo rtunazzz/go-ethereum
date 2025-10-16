@@ -377,25 +377,25 @@ var (
 		Max:            9,
 		UpdateFraction: 5007716,
 	}
-	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	// DefaultBPO1BlobConfig is the default blob configuration for the BPO1 fork.
 	DefaultBPO1BlobConfig = &BlobConfig{
 		Target:         10,
 		Max:            15,
 		UpdateFraction: 8346193,
 	}
-	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	// DefaultBPO2BlobConfig is the default blob configuration for the BPO2 fork.
 	DefaultBPO2BlobConfig = &BlobConfig{
 		Target:         14,
 		Max:            21,
 		UpdateFraction: 11684671,
 	}
-	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	// DefaultBPO3BlobConfig is the default blob configuration for the BPO3 fork.
 	DefaultBPO3BlobConfig = &BlobConfig{
 		Target:         21,
 		Max:            32,
 		UpdateFraction: 20609697,
 	}
-	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	// DefaultBPO4BlobConfig is the default blob configuration for the BPO4 fork.
 	DefaultBPO4BlobConfig = &BlobConfig{
 		Target:         14,
 		Max:            21,
@@ -504,6 +504,96 @@ func (c CliqueConfig) String() string {
 	return fmt.Sprintf("clique(period: %d, epoch: %d)", c.Period, c.Epoch)
 }
 
+// String implements the fmt.Stringer interface, returning a string representation
+// of ChainConfig.
+func (c *ChainConfig) String() string {
+	result := fmt.Sprintf("ChainConfig{ChainID: %v", c.ChainID)
+
+	// Add block-based forks
+	if c.HomesteadBlock != nil {
+		result += fmt.Sprintf(", HomesteadBlock: %v", c.HomesteadBlock)
+	}
+	if c.DAOForkBlock != nil {
+		result += fmt.Sprintf(", DAOForkBlock: %v", c.DAOForkBlock)
+	}
+	if c.EIP150Block != nil {
+		result += fmt.Sprintf(", EIP150Block: %v", c.EIP150Block)
+	}
+	if c.EIP155Block != nil {
+		result += fmt.Sprintf(", EIP155Block: %v", c.EIP155Block)
+	}
+	if c.EIP158Block != nil {
+		result += fmt.Sprintf(", EIP158Block: %v", c.EIP158Block)
+	}
+	if c.ByzantiumBlock != nil {
+		result += fmt.Sprintf(", ByzantiumBlock: %v", c.ByzantiumBlock)
+	}
+	if c.ConstantinopleBlock != nil {
+		result += fmt.Sprintf(", ConstantinopleBlock: %v", c.ConstantinopleBlock)
+	}
+	if c.PetersburgBlock != nil {
+		result += fmt.Sprintf(", PetersburgBlock: %v", c.PetersburgBlock)
+	}
+	if c.IstanbulBlock != nil {
+		result += fmt.Sprintf(", IstanbulBlock: %v", c.IstanbulBlock)
+	}
+	if c.MuirGlacierBlock != nil {
+		result += fmt.Sprintf(", MuirGlacierBlock: %v", c.MuirGlacierBlock)
+	}
+	if c.BerlinBlock != nil {
+		result += fmt.Sprintf(", BerlinBlock: %v", c.BerlinBlock)
+	}
+	if c.LondonBlock != nil {
+		result += fmt.Sprintf(", LondonBlock: %v", c.LondonBlock)
+	}
+	if c.ArrowGlacierBlock != nil {
+		result += fmt.Sprintf(", ArrowGlacierBlock: %v", c.ArrowGlacierBlock)
+	}
+	if c.GrayGlacierBlock != nil {
+		result += fmt.Sprintf(", GrayGlacierBlock: %v", c.GrayGlacierBlock)
+	}
+	if c.MergeNetsplitBlock != nil {
+		result += fmt.Sprintf(", MergeNetsplitBlock: %v", c.MergeNetsplitBlock)
+	}
+
+	// Add timestamp-based forks
+	if c.ShanghaiTime != nil {
+		result += fmt.Sprintf(", ShanghaiTime: %v", *c.ShanghaiTime)
+	}
+	if c.CancunTime != nil {
+		result += fmt.Sprintf(", CancunTime: %v", *c.CancunTime)
+	}
+	if c.PragueTime != nil {
+		result += fmt.Sprintf(", PragueTime: %v", *c.PragueTime)
+	}
+	if c.OsakaTime != nil {
+		result += fmt.Sprintf(", OsakaTime: %v", *c.OsakaTime)
+	}
+	if c.BPO1Time != nil {
+		result += fmt.Sprintf(", BPO1Time: %v", *c.BPO1Time)
+	}
+	if c.BPO2Time != nil {
+		result += fmt.Sprintf(", BPO2Time: %v", *c.BPO2Time)
+	}
+	if c.BPO3Time != nil {
+		result += fmt.Sprintf(", BPO3Time: %v", *c.BPO3Time)
+	}
+	if c.BPO4Time != nil {
+		result += fmt.Sprintf(", BPO4Time: %v", *c.BPO4Time)
+	}
+	if c.BPO5Time != nil {
+		result += fmt.Sprintf(", BPO5Time: %v", *c.BPO5Time)
+	}
+	if c.AmsterdamTime != nil {
+		result += fmt.Sprintf(", AmsterdamTime: %v", *c.AmsterdamTime)
+	}
+	if c.VerkleTime != nil {
+		result += fmt.Sprintf(", VerkleTime: %v", *c.VerkleTime)
+	}
+	result += "}"
+	return result
+}
+
 // Description returns a human-readable description of ChainConfig.
 func (c *ChainConfig) Description() string {
 	var banner string
@@ -528,34 +618,32 @@ func (c *ChainConfig) Description() string {
 	// makes sense for mainnet should be optional at printing to avoid bloating
 	// the output for testnets and private networks.
 	banner += "Pre-Merge hard forks (block based):\n"
-	banner += fmt.Sprintf(" - Homestead:                   #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/homestead/__init__.py.html)\n", c.HomesteadBlock)
+	banner += fmt.Sprintf(" - Homestead:                   #%-8v\n", c.HomesteadBlock)
 	if c.DAOForkBlock != nil {
-		banner += fmt.Sprintf(" - DAO Fork:                    #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/dao_fork/__init__.py.html)\n", c.DAOForkBlock)
+		banner += fmt.Sprintf(" - DAO Fork:                    #%-8v\n", c.DAOForkBlock)
 	}
-	banner += fmt.Sprintf(" - Tangerine Whistle (EIP 150): #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/tangerine_whistle/__init__.py.html)\n", c.EIP150Block)
-	banner += fmt.Sprintf(" - Spurious Dragon/1 (EIP 155): #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/spurious_dragon/__init__.py.html)\n", c.EIP155Block)
-	banner += fmt.Sprintf(" - Spurious Dragon/2 (EIP 158): #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/spurious_dragon/__init__.py.html)\n", c.EIP155Block)
-	banner += fmt.Sprintf(" - Byzantium:                   #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/byzantium/__init__.py.html)\n", c.ByzantiumBlock)
-	banner += fmt.Sprintf(" - Constantinople:              #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/constantinople/__init__.py.html)\n", c.ConstantinopleBlock)
-	banner += fmt.Sprintf(" - Petersburg:                  #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/constantinople/__init__.py.html)\n", c.PetersburgBlock)
-	banner += fmt.Sprintf(" - Istanbul:                    #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/istanbul/__init__.py.html)\n", c.IstanbulBlock)
+	banner += fmt.Sprintf(" - Tangerine Whistle (EIP 150): #%-8v\n", c.EIP150Block)
+	banner += fmt.Sprintf(" - Spurious Dragon/1 (EIP 155): #%-8v\n", c.EIP155Block)
+	banner += fmt.Sprintf(" - Spurious Dragon/2 (EIP 158): #%-8v\n", c.EIP158Block)
+	banner += fmt.Sprintf(" - Byzantium:                   #%-8v\n", c.ByzantiumBlock)
+	banner += fmt.Sprintf(" - Constantinople:              #%-8v\n", c.ConstantinopleBlock)
+	banner += fmt.Sprintf(" - Petersburg:                  #%-8v\n", c.PetersburgBlock)
+	banner += fmt.Sprintf(" - Istanbul:                    #%-8v\n", c.IstanbulBlock)
 	if c.MuirGlacierBlock != nil {
-		banner += fmt.Sprintf(" - Muir Glacier:                #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/muir_glacier/__init__.py.html)\n", c.MuirGlacierBlock)
+		banner += fmt.Sprintf(" - Muir Glacier:                #%-8v\n", c.MuirGlacierBlock)
 	}
-	banner += fmt.Sprintf(" - Berlin:                      #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/berlin/__init__.py.html)\n", c.BerlinBlock)
-	banner += fmt.Sprintf(" - London:                      #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/london/__init__.py.html)\n", c.LondonBlock)
+	banner += fmt.Sprintf(" - Berlin:                      #%-8v\n", c.BerlinBlock)
+	banner += fmt.Sprintf(" - London:                      #%-8v\n", c.LondonBlock)
 	if c.ArrowGlacierBlock != nil {
-		banner += fmt.Sprintf(" - Arrow Glacier:               #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/arrow_glacier/__init__.py.html)\n", c.ArrowGlacierBlock)
+		banner += fmt.Sprintf(" - Arrow Glacier:               #%-8v\n", c.ArrowGlacierBlock)
 	}
 	if c.GrayGlacierBlock != nil {
-		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v (https://ethereum.github.io/execution-specs/src/ethereum/forks/gray_glacier/__init__.py.html)\n", c.GrayGlacierBlock)
+		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v\n", c.GrayGlacierBlock)
 	}
 	banner += "\n"
 
 	// Add a special section for the merge as it's non-obvious
 	banner += "Merge configured:\n"
-	banner += " - Hard-fork specification:    https://ethereum.github.io/execution-specs/src/ethereum/forks/paris/__init__.py.html\n"
-	banner += " - Network known to be merged\n"
 	banner += fmt.Sprintf(" - Total terminal difficulty:  %v\n", c.TerminalTotalDifficulty)
 	if c.MergeNetsplitBlock != nil {
 		banner += fmt.Sprintf(" - Merge netsplit block:       #%-8v\n", c.MergeNetsplitBlock)
@@ -565,38 +653,39 @@ func (c *ChainConfig) Description() string {
 	// Create a list of forks post-merge
 	banner += "Post-Merge hard forks (timestamp based):\n"
 	if c.ShanghaiTime != nil {
-		banner += fmt.Sprintf(" - Shanghai:                    @%-10v (https://ethereum.github.io/execution-specs/src/ethereum/forks/shanghai/__init__.py.html)\n", *c.ShanghaiTime)
+		banner += fmt.Sprintf(" - Shanghai:                    @%-10v\n", *c.ShanghaiTime)
 	}
 	if c.CancunTime != nil {
-		banner += fmt.Sprintf(" - Cancun:                      @%-10v (https://ethereum.github.io/execution-specs/src/ethereum/forks/cancun/__init__.py.html)\n", *c.CancunTime)
+		banner += fmt.Sprintf(" - Cancun:                      @%-10v blob: (%s)\n", *c.CancunTime, c.BlobScheduleConfig.Cancun)
 	}
 	if c.PragueTime != nil {
-		banner += fmt.Sprintf(" - Prague:                      @%-10v (https://ethereum.github.io/execution-specs/src/ethereum/forks/prague/__init__.py.html)\n", *c.PragueTime)
+		banner += fmt.Sprintf(" - Prague:                      @%-10v blob: (%s)\n", *c.PragueTime, c.BlobScheduleConfig.Prague)
 	}
 	if c.OsakaTime != nil {
-		banner += fmt.Sprintf(" - Osaka:                       @%-10v (https://ethereum.github.io/execution-specs/src/ethereum/forks/osaka/__init__.py.html)\n", *c.OsakaTime)
+		banner += fmt.Sprintf(" - Osaka:                       @%-10v blob: (%s)\n", *c.OsakaTime, c.BlobScheduleConfig.Osaka)
 	}
 	if c.BPO1Time != nil {
-		banner += fmt.Sprintf(" - BPO1:                        @%-10v\n", *c.BPO1Time)
+		banner += fmt.Sprintf(" - BPO1:                        @%-10v blob: (%s)\n", *c.BPO1Time, c.BlobScheduleConfig.BPO1)
 	}
 	if c.BPO2Time != nil {
-		banner += fmt.Sprintf(" - BPO2:                        @%-10v\n", *c.BPO2Time)
+		banner += fmt.Sprintf(" - BPO2:                        @%-10v blob: (%s)\n", *c.BPO2Time, c.BlobScheduleConfig.BPO2)
 	}
 	if c.BPO3Time != nil {
-		banner += fmt.Sprintf(" - BPO3:                        @%-10v\n", *c.BPO3Time)
+		banner += fmt.Sprintf(" - BPO3:                        @%-10v blob: (%s)\n", *c.BPO3Time, c.BlobScheduleConfig.BPO3)
 	}
 	if c.BPO4Time != nil {
-		banner += fmt.Sprintf(" - BPO4:                        @%-10v\n", *c.BPO4Time)
+		banner += fmt.Sprintf(" - BPO4:                        @%-10v blob: (%s)\n", *c.BPO4Time, c.BlobScheduleConfig.BPO4)
 	}
 	if c.BPO5Time != nil {
-		banner += fmt.Sprintf(" - BPO5:                        @%-10v\n", *c.BPO5Time)
+		banner += fmt.Sprintf(" - BPO5:                        @%-10v blob: (%s)\n", *c.BPO5Time, c.BlobScheduleConfig.BPO5)
 	}
 	if c.AmsterdamTime != nil {
-		banner += fmt.Sprintf(" - Amsterdam:									 @%-10v\n", *c.AmsterdamTime)
+		banner += fmt.Sprintf(" - Amsterdam:									 @%-10v blob: (%s)\n", *c.AmsterdamTime, c.BlobScheduleConfig.Amsterdam)
 	}
 	if c.VerkleTime != nil {
-		banner += fmt.Sprintf(" - Verkle:                      @%-10v\n", *c.VerkleTime)
+		banner += fmt.Sprintf(" - Verkle:                      @%-10v blob: (%s)\n", *c.VerkleTime, c.BlobScheduleConfig.Verkle)
 	}
+	banner += fmt.Sprintf("\nAll fork specifications can be found at https://ethereum.github.io/execution-specs/src/ethereum/forks/\n")
 	return banner
 }
 
@@ -605,6 +694,14 @@ type BlobConfig struct {
 	Target         int    `json:"target"`
 	Max            int    `json:"max"`
 	UpdateFraction uint64 `json:"baseFeeUpdateFraction"`
+}
+
+// String implement fmt.Stringer, returning string format blob config.
+func (bc *BlobConfig) String() string {
+	if bc == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("target: %d, max: %d, fraction: %d", bc.Target, bc.Max, bc.UpdateFraction)
 }
 
 // BlobScheduleConfig determines target and max number of blobs allow per fork.
