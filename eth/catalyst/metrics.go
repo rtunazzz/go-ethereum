@@ -14,20 +14,20 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build !tinygo
-// +build !tinygo
+package catalyst
 
-package rawdb
+import "github.com/ethereum/go-ethereum/metrics"
 
-import (
-	"io"
+var (
+	// Number of blobs requested via getBlobsV2
+	getBlobsRequestedCounter = metrics.NewRegisteredCounter("engine/getblobs/requested", nil)
 
-	"github.com/olekukonko/tablewriter"
+	// Number of blobs requested via getBlobsV2 that are present in the blobpool
+	getBlobsAvailableCounter = metrics.NewRegisteredCounter("engine/getblobs/available", nil)
+
+	// Number of times getBlobsV2 responded with “hit”
+	getBlobsV2RequestHit = metrics.NewRegisteredCounter("engine/getblobs/hit", nil)
+
+	// Number of times getBlobsV2 responded with “miss”
+	getBlobsV2RequestMiss = metrics.NewRegisteredCounter("engine/getblobs/miss", nil)
 )
-
-// Re-export the real tablewriter types and functions
-type Table = tablewriter.Table
-
-func newTableWriter(w io.Writer) *Table {
-	return tablewriter.NewWriter(w)
-}

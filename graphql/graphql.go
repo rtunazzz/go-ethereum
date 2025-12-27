@@ -575,6 +575,9 @@ func (t *Transaction) getLogs(ctx context.Context, hash common.Hash) (*[]*Log, e
 
 func (t *Transaction) Type(ctx context.Context) *hexutil.Uint64 {
 	tx, _ := t.resolve(ctx)
+	if tx == nil {
+		return nil
+	}
 	txType := hexutil.Uint64(tx.Type())
 	return &txType
 }
@@ -703,6 +706,9 @@ func (b *Block) resolveHeader(ctx context.Context) (*types.Header, error) {
 	b.header, err = b.r.backend.HeaderByNumberOrHash(ctx, *b.numberOrHash)
 	if err != nil {
 		return nil, err
+	}
+	if b.header == nil {
+		return nil, nil
 	}
 	if b.hash == (common.Hash{}) {
 		b.hash = b.header.Hash()

@@ -374,9 +374,9 @@ func (api *BlockChainAPI) GetProof(ctx context.Context, address common.Address, 
 	// Deserialize all keys. This prevents state access on invalid input.
 	for i, hexKey := range storageKeys {
 		var err error
-		keys[i], keyLengths[i], err = decodeHash(hexKey)
+		keys[i], keyLengths[i], err = decodeStorageKey(hexKey)
 		if err != nil {
-			return nil, err
+			return nil, &invalidParamsError{fmt.Sprintf("%v: %q", err, hexKey)}
 		}
 	}
 	statedb, header, err := api.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
@@ -441,9 +441,10 @@ func (api *BlockChainAPI) GetProof(ctx context.Context, address common.Address, 
 	}, statedb.Error()
 }
 
-// decodeHash parses a hex-encoded 32-byte hash. The input may optionally
-// be prefixed by 0x and can have a byte length up to 32.
-func decodeHash(s string) (h common.Hash, inputLength int, err error) {
+// decodeStorageKey parses a hex-encoded 32-byte hash.
+// For legacy compatibility reasons, we parse these keys leniently,
+// with the 0x prefix being optional.
+func decodeStorageKey(s string) (h common.Hash, inputLength int, err error) {
 	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
 		s = s[2:]
 	}
@@ -451,11 +452,11 @@ func decodeHash(s string) (h common.Hash, inputLength int, err error) {
 		s = "0" + s
 	}
 	if len(s) > 64 {
-		return common.Hash{}, len(s) / 2, errors.New("hex string too long, want at most 32 bytes")
+		return common.Hash{}, len(s) / 2, errors.New("storage key too long (want at most 32 bytes)")
 	}
 	b, err := hex.DecodeString(s)
 	if err != nil {
-		return common.Hash{}, 0, errors.New("hex string invalid")
+		return common.Hash{}, 0, errors.New("invalid hex in storage key")
 	}
 	return common.BytesToHash(b), len(b), nil
 }
@@ -589,9 +590,9 @@ func (api *BlockChainAPI) GetStorageAt(ctx context.Context, address common.Addre
 	if state == nil || err != nil {
 		return nil, err
 	}
-	key, _, err := decodeHash(hexKey)
+	key, _, err := decodeStorageKey(hexKey)
 	if err != nil {
-		return nil, fmt.Errorf("unable to decode storage key: %s", err)
+		return nil, &invalidParamsError{fmt.Sprintf("%v: %q", err, hexKey)}
 	}
 	res := state.GetState(address, key)
 	return res[:], state.Error()
@@ -1606,7 +1607,7 @@ func (api *TransactionAPI) SendTransaction(ctx context.Context, args Transaction
 		return common.Hash{}, err
 	}
 	// Assemble the transaction and sign with the wallet
-	tx := args.ToTransaction(types.LegacyTxType)
+	tx := args.ToTransaction(types.DynamicFeeTxType)
 
 	signed, err := wallet.SignTx(account, tx, api.b.ChainConfig().ChainID)
 	if err != nil {
@@ -1628,7 +1629,7 @@ func (api *TransactionAPI) FillTransaction(ctx context.Context, args Transaction
 		return nil, err
 	}
 	// Assemble the transaction and obtain rlp
-	tx := args.ToTransaction(types.LegacyTxType)
+	tx := args.ToTransaction(types.DynamicFeeTxType)
 	data, err := tx.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -1675,9 +1676,20 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 		return nil, err
 	}
 
+	// Convert legacy blob transaction proofs.
+	// TODO: remove in go-ethereum v1.17.x
+	if sc := tx.BlobTxSidecar(); sc != nil {
+		exp := api.currentBlobSidecarVersion()
+		if sc.Version == types.BlobSidecarVersion0 && exp == types.BlobSidecarVersion1 {
+			if err := sc.ToV1(); err != nil {
+				return nil, fmt.Errorf("blob sidecar conversion failed: %v", err)
+			}
+			tx = tx.WithBlobTxSidecar(sc)
+		}
+	}
+
 	ch := make(chan core.ChainEvent, 128)
 	sub := api.b.SubscribeChainEvent(ch)
-	subErrCh := sub.Err()
 	defer sub.Unsubscribe()
 
 	hash, err := SubmitTransaction(ctx, api.b, tx)
@@ -1685,10 +1697,11 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 		return nil, err
 	}
 
-	maxTimeout := api.b.RPCTxSyncMaxTimeout()
-	defaultTimeout := api.b.RPCTxSyncDefaultTimeout()
-
-	timeout := defaultTimeout
+	var (
+		maxTimeout     = api.b.RPCTxSyncMaxTimeout()
+		defaultTimeout = api.b.RPCTxSyncDefaultTimeout()
+		timeout        = defaultTimeout
+	)
 	if timeoutMs != nil && *timeoutMs > 0 {
 		req := time.Duration(*timeoutMs) * time.Millisecond
 		if req > maxTimeout {
@@ -1697,7 +1710,6 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 			timeout = req
 		}
 	}
-
 	receiptCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -1706,19 +1718,20 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 		return r, nil
 	}
 
+	// Monitor the receipts
 	for {
 		select {
 		case <-receiptCtx.Done():
 			// If server-side wait window elapsed, return the structured timeout.
 			if errors.Is(receiptCtx.Err(), context.DeadlineExceeded) {
 				return nil, &txSyncTimeoutError{
-					msg:  fmt.Sprintf("The transaction was added to the transaction pool but wasn't processed in %v.", timeout),
+					msg:  fmt.Sprintf("The transaction was added to the transaction pool but wasn't processed in %v", timeout),
 					hash: hash,
 				}
 			}
 			return nil, receiptCtx.Err()
 
-		case err, ok := <-subErrCh:
+		case err, ok := <-sub.Err():
 			if !ok {
 				return nil, errSubClosed
 			}
@@ -1728,8 +1741,7 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 			if !ok {
 				return nil, errSubClosed
 			}
-			rs := ev.Receipts
-			txs := ev.Transactions
+			rs, txs := ev.Receipts, ev.Transactions
 			if len(rs) == 0 || len(rs) != len(txs) {
 				continue
 			}
@@ -1813,7 +1825,7 @@ func (api *TransactionAPI) SignTransaction(ctx context.Context, args Transaction
 		return nil, err
 	}
 	// Before actually sign the transaction, ensure the transaction fee is reasonable.
-	tx := args.ToTransaction(types.LegacyTxType)
+	tx := args.ToTransaction(types.DynamicFeeTxType)
 	if err := checkTxFee(tx.GasPrice(), tx.Gas(), api.b.RPCTxFeeCap()); err != nil {
 		return nil, err
 	}
@@ -1869,7 +1881,7 @@ func (api *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs,
 	if err := sendArgs.setDefaults(ctx, api.b, sidecarConfig{}); err != nil {
 		return common.Hash{}, err
 	}
-	matchTx := sendArgs.ToTransaction(types.LegacyTxType)
+	matchTx := sendArgs.ToTransaction(types.DynamicFeeTxType)
 
 	// Before replacing the old transaction, ensure the _new_ transaction fee is reasonable.
 	price := matchTx.GasPrice()
@@ -1899,7 +1911,7 @@ func (api *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs,
 			if gasLimit != nil && *gasLimit != 0 {
 				sendArgs.Gas = gasLimit
 			}
-			signedTx, err := api.sign(sendArgs.from(), sendArgs.ToTransaction(types.LegacyTxType))
+			signedTx, err := api.sign(sendArgs.from(), sendArgs.ToTransaction(types.DynamicFeeTxType))
 			if err != nil {
 				return common.Hash{}, err
 			}
