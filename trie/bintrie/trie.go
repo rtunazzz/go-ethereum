@@ -79,10 +79,7 @@ func ChunkifyCode(code []byte) ChunkedCode {
 	chunks := make([]byte, chunkCount*HashSize)
 	for i := 0; i < chunkCount; i++ {
 		// number of bytes to copy, StemSize unless the end of the code has been reached.
-		end := StemSize * (i + 1)
-		if len(code) < end {
-			end = len(code)
-		}
+		end := min(len(code), StemSize*(i+1))
 		copy(chunks[i*HashSize+1:], code[StemSize*i:end]) // copy the code itself
 
 		// chunk offset = taken from the last chunk.
@@ -239,7 +236,7 @@ func (t *BinaryTrie) GetAccount(addr common.Address) (*types.StateAccount, error
 // not be modified by the caller. If a node was not found in the database, a
 // trie.MissingNodeError is returned.
 func (t *BinaryTrie) GetStorage(addr common.Address, key []byte) ([]byte, error) {
-	return t.root.Get(GetBinaryTreeKey(addr, key), t.nodeResolver)
+	return t.root.Get(GetBinaryTreeKeyStorageSlot(addr, key), t.nodeResolver)
 }
 
 // UpdateAccount updates the account information for the given address.
@@ -305,7 +302,7 @@ func (t *BinaryTrie) DeleteAccount(addr common.Address) error {
 // DeleteStorage removes any existing value for key from the trie. If a node was not
 // found in the database, a trie.MissingNodeError is returned.
 func (t *BinaryTrie) DeleteStorage(addr common.Address, key []byte) error {
-	k := GetBinaryTreeKey(addr, key)
+	k := GetBinaryTreeKeyStorageSlot(addr, key)
 	var zero [HashSize]byte
 	root, err := t.root.Insert(k, zero[:], t.nodeResolver, 0)
 	if err != nil {
@@ -427,5 +424,5 @@ func (t *BinaryTrie) PrefetchStorage(addr common.Address, keys [][]byte) error {
 
 // Witness returns a set containing all trie nodes that have been accessed.
 func (t *BinaryTrie) Witness() map[string][]byte {
-	panic("not implemented")
+	return t.tracer.Values()
 }

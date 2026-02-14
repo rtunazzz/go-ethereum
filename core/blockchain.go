@@ -76,6 +76,7 @@ var (
 	storageUpdateTimer = metrics.NewRegisteredResettingTimer("chain/storage/updates", nil)
 	storageCommitTimer = metrics.NewRegisteredResettingTimer("chain/storage/commits", nil)
 	codeReadTimer      = metrics.NewRegisteredResettingTimer("chain/code/reads", nil)
+	codeReadBytesTimer = metrics.NewRegisteredResettingTimer("chain/code/readbytes", nil)
 
 	accountCacheHitMeter  = metrics.NewRegisteredMeter("chain/account/reads/cache/process/hit", nil)
 	accountCacheMissMeter = metrics.NewRegisteredMeter("chain/account/reads/cache/process/miss", nil)
@@ -177,6 +178,17 @@ type BlockChainConfig struct {
 	// If set to 0, all state histories across the entire chain will be retained;
 	StateHistory uint64
 
+	// Number of blocks from the chain head for which trienode histories are retained.
+	// If set to 0, all trienode histories across the entire chain will be retained;
+	// If set to -1, no trienode history will be retained;
+	TrienodeHistory int64
+
+	// The frequency of full-value encoding. For example, a value of 16 means
+	// that, on average, for a given trie node across its 16 consecutive historical
+	// versions, only one version is stored in full format, while the others
+	// are stored in diff mode for storage compression.
+	NodeFullValueCheckpoint uint32
+
 	// State snapshot related options
 	SnapshotLimit   int  // Memory allowance (MB) to use for caching snapshot entries in memory
 	SnapshotNoBuild bool // Whether the background generation is allowed
@@ -202,7 +214,8 @@ type BlockChainConfig struct {
 	StateSizeTracking bool
 
 	// SlowBlockThreshold is the block execution time threshold beyond which
-	// detailed statistics will be logged.
+	// detailed statistics will be logged. Negative value means disabled (default),
+	// zero logs all blocks, positive value filters blocks by execution time.
 	SlowBlockThreshold time.Duration
 }
 
@@ -254,17 +267,22 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	}
 	if cfg.StateScheme == rawdb.PathScheme {
 		config.PathDB = &pathdb.Config{
-			StateHistory:        cfg.StateHistory,
-			EnableStateIndexing: cfg.ArchiveMode,
-			TrieCleanSize:       cfg.TrieCleanLimit * 1024 * 1024,
-			StateCleanSize:      cfg.SnapshotLimit * 1024 * 1024,
-			JournalDirectory:    cfg.TrieJournalDirectory,
-
+			TrieCleanSize:  cfg.TrieCleanLimit * 1024 * 1024,
+			StateCleanSize: cfg.SnapshotLimit * 1024 * 1024,
 			// TODO(rjl493456442): The write buffer represents the memory limit used
 			// for flushing both trie data and state data to disk. The config name
 			// should be updated to eliminate the confusion.
-			WriteBufferSize: cfg.TrieDirtyLimit * 1024 * 1024,
-			NoAsyncFlush:    cfg.TrieNoAsyncFlush,
+			WriteBufferSize:  cfg.TrieDirtyLimit * 1024 * 1024,
+			JournalDirectory: cfg.TrieJournalDirectory,
+
+			// Historical state configurations
+			StateHistory:        cfg.StateHistory,
+			TrienodeHistory:     cfg.TrienodeHistory,
+			EnableStateIndexing: cfg.ArchiveMode,
+			FullValueCheckpoint: cfg.NodeFullValueCheckpoint,
+
+			// Testing configurations
+			NoAsyncFlush: cfg.TrieNoAsyncFlush,
 		}
 	}
 	return config
@@ -311,6 +329,7 @@ type BlockChain struct {
 	chainHeadFeed    event.Feed
 	logsFeed         event.Feed
 	blockProcFeed    event.Feed
+	newPayloadFeed   event.Feed // Feed for engine API newPayload events
 	blockProcCounter int32
 	scope            event.SubscriptionScope
 	genesisBlock     *types.Block
@@ -366,7 +385,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	// yet. The corresponding chain config will be returned, either from the
 	// provided genesis or from the locally stored configuration if the genesis
 	// has already been initialized.
-	chainConfig, genesisHash, compatErr, err := SetupGenesisBlockWithOverride(db, triedb, genesis, cfg.Overrides)
+	chainConfig, genesisHash, compatErr, err := SetupGenesisBlockWithOverride(db, triedb, genesis, cfg.Overrides, cfg.VmConfig.Tracer)
 	if err != nil {
 		return nil, err
 	}
@@ -745,21 +764,7 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	if _, err := bc.setHeadBeyondRoot(head, 0, common.Hash{}, false); err != nil {
 		return err
 	}
-	// Send chain head event to update the transaction pool
-	header := bc.CurrentBlock()
-	if block := bc.GetBlock(header.Hash(), header.Number.Uint64()); block == nil {
-		// In a pruned node the genesis block will not exist in the freezer.
-		// It should not happen that we set head to any other pruned block.
-		if header.Number.Uint64() > 0 {
-			// This should never happen. In practice, previously currentBlock
-			// contained the entire block whereas now only a "marker", so there
-			// is an ever so slight chance for a race we should handle.
-			log.Error("Current block not found in database", "block", header.Number, "hash", header.Hash())
-			return fmt.Errorf("current block missing: #%d [%x..]", header.Number, header.Hash().Bytes()[:4])
-		}
-	}
-	bc.chainHeadFeed.Send(ChainHeadEvent{Header: header})
-	return nil
+	return bc.sendChainHeadEvent()
 }
 
 // SetHeadWithTimestamp rewinds the local chain to a new head that has at max
@@ -770,7 +775,12 @@ func (bc *BlockChain) SetHeadWithTimestamp(timestamp uint64) error {
 	if _, err := bc.setHeadBeyondRoot(0, timestamp, common.Hash{}, false); err != nil {
 		return err
 	}
-	// Send chain head event to update the transaction pool
+	return bc.sendChainHeadEvent()
+}
+
+// sendChainHeadEvent notifies all subscribers about the new chain head,
+// checking first that the current block is actually available.
+func (bc *BlockChain) sendChainHeadEvent() error {
 	header := bc.CurrentBlock()
 	if block := bc.GetBlock(header.Hash(), header.Number.Uint64()); block == nil {
 		// In a pruned node the genesis block will not exist in the freezer.
@@ -1105,11 +1115,12 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 	bc.txLookupCache.Purge()
 
 	// Clear safe block, finalized block if needed
-	if safe := bc.CurrentSafeBlock(); safe != nil && head < safe.Number.Uint64() {
+	headBlock := bc.CurrentBlock()
+	if safe := bc.CurrentSafeBlock(); safe != nil && headBlock.Number.Uint64() < safe.Number.Uint64() {
 		log.Warn("SetHead invalidated safe block")
 		bc.SetSafe(nil)
 	}
-	if finalized := bc.CurrentFinalBlock(); finalized != nil && head < finalized.Number.Uint64() {
+	if finalized := bc.CurrentFinalBlock(); finalized != nil && headBlock.Number.Uint64() < finalized.Number.Uint64() {
 		log.Error("SetHead invalidated finalized block")
 		bc.SetFinalized(nil)
 	}
@@ -1649,20 +1660,35 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	log.Debug("Committed block data", "size", common.StorageSize(batch.ValueSize()), "elapsed", common.PrettyDuration(time.Since(start)))
 
 	var (
-		err      error
-		root     common.Hash
-		isEIP158 = bc.chainConfig.IsEIP158(block.Number())
-		isCancun = bc.chainConfig.IsCancun(block.Number(), block.Time())
+		err           error
+		root          common.Hash
+		isEIP158      = bc.chainConfig.IsEIP158(block.Number())
+		isCancun      = bc.chainConfig.IsCancun(block.Number(), block.Time())
+		hasStateHook  = bc.logger != nil && bc.logger.OnStateUpdate != nil
+		hasStateSizer = bc.stateSizer != nil
 	)
-	if bc.stateSizer == nil {
-		root, err = statedb.Commit(block.NumberU64(), isEIP158, isCancun)
+	if hasStateHook || hasStateSizer {
+		r, update, err := statedb.CommitWithUpdate(block.NumberU64(), isEIP158, isCancun)
+		if err != nil {
+			return err
+		}
+		if hasStateHook {
+			trUpdate, err := update.ToTracingUpdate()
+			if err != nil {
+				return err
+			}
+			bc.logger.OnStateUpdate(trUpdate)
+		}
+		if hasStateSizer {
+			bc.stateSizer.Notify(update)
+		}
+		root = r
 	} else {
-		root, err = statedb.CommitAndTrack(block.NumberU64(), isEIP158, isCancun, bc.stateSizer)
+		root, err = statedb.Commit(block.NumberU64(), isEIP158, isCancun)
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
 	if bc.triedb.Scheme() == rawdb.PathScheme {
@@ -2081,24 +2107,11 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 		}
 		// Upload the statistics of reader at the end
 		defer func() {
-			pStat := prefetch.GetStats()
-			accountCacheHitPrefetchMeter.Mark(pStat.AccountCacheHit)
-			accountCacheMissPrefetchMeter.Mark(pStat.AccountCacheMiss)
-			storageCacheHitPrefetchMeter.Mark(pStat.StorageCacheHit)
-			storageCacheMissPrefetchMeter.Mark(pStat.StorageCacheMiss)
-
-			rStat := process.GetStats()
-			accountCacheHitMeter.Mark(rStat.AccountCacheHit)
-			accountCacheMissMeter.Mark(rStat.AccountCacheMiss)
-			storageCacheHitMeter.Mark(rStat.StorageCacheHit)
-			storageCacheMissMeter.Mark(rStat.StorageCacheMiss)
-
 			if result != nil {
-				result.stats.StatePrefetchCacheStats = pStat
-				result.stats.StateReadCacheStats = rStat
+				result.stats.StatePrefetchCacheStats = prefetch.GetStats()
+				result.stats.StateReadCacheStats = process.GetStats()
 			}
 		}()
-
 		go func(start time.Time, throwaway *state.StateDB, block *types.Block) {
 			// Disable tracing for prefetcher executions.
 			vmCfg := bc.cfg.VmConfig
@@ -2213,7 +2226,11 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 	stats.StorageLoaded = statedb.StorageLoaded
 	stats.StorageUpdated = int(statedb.StorageUpdated.Load())
 	stats.StorageDeleted = int(statedb.StorageDeleted.Load())
+
 	stats.CodeLoaded = statedb.CodeLoaded
+	stats.CodeLoadBytes = statedb.CodeLoadBytes
+	stats.CodeUpdated = statedb.CodeUpdated
+	stats.CodeUpdateBytes = statedb.CodeUpdateBytes
 
 	stats.Execution = ptime - (statedb.AccountReads + statedb.StorageReads + statedb.CodeReads)          // The time spent on EVM processing
 	stats.Validation = vtime - (statedb.AccountHashes + statedb.AccountUpdates + statedb.StorageUpdates) // The time spent on block validation
