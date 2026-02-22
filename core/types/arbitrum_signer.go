@@ -40,6 +40,8 @@ func (s arbitrumSigner) Sender(tx *Transaction) (common.Address, error) {
 		return inner.From, nil
 	case *ArbitrumDepositTx:
 		return inner.From, nil
+	case *DepositTx:
+		return inner.From, nil
 	case *ArbitrumInternalTx:
 		return ArbosAddress, nil
 	case *ArbitrumRetryTx:
@@ -70,6 +72,8 @@ func (s arbitrumSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *b
 	case *ArbitrumContractTx:
 		return bigZero, bigZero, bigZero, nil
 	case *ArbitrumDepositTx:
+		return bigZero, bigZero, bigZero, nil
+	case *DepositTx:
 		return bigZero, bigZero, bigZero, nil
 	case *ArbitrumInternalTx:
 		return bigZero, bigZero, bigZero, nil

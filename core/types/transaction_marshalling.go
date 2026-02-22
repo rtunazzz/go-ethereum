@@ -71,6 +71,11 @@ type txJSON struct {
 	EffectiveGasPrice   *hexutil.Uint64 `json:"effectiveGasPrice,omitempty"`   // ArbLegacy
 	L1BlockNumber       *hexutil.Uint64 `json:"l1BlockNumber,omitempty"`       // ArbLegacy
 
+	// Optimism deposit fields:
+	SourceHash *common.Hash `json:"sourceHash,omitempty"`
+	Mint       *hexutil.Big `json:"mint,omitempty"`
+	IsSystemTx *bool        `json:"isSystemTx,omitempty"`
+
 	// Only used for encoding - and for ArbLegacy
 	Hash common.Hash `json:"hash"`
 }
@@ -187,6 +192,17 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.S = (*hexutil.Big)(itx.S.ToBig())
 		yparity := itx.V.Uint64()
 		enc.YParity = (*hexutil.Uint64)(&yparity)
+	case *DepositTx:
+		enc.SourceHash = &itx.SourceHash
+		enc.From = &itx.From
+		enc.To = tx.To()
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Value = (*hexutil.Big)(itx.Value)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.Mint = (*hexutil.Big)(itx.Mint)
+		enc.IsSystemTx = &itx.IsSystemTransaction
+		var nonce hexutil.Uint64
+		enc.Nonce = &nonce
 	}
 	return json.Marshal(&enc)
 }
@@ -811,28 +827,19 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'value' in transaction")
 		}
 		itx.Value = (*big.Int)(dec.Value)
-	// mint may be omitted or nil if there is nothing to mint.
-	// itx.Mint = (*big.Int)(dec.Mint)
-	// if dec.Input == nil {
-	// 	return errors.New("missing required field 'input' in transaction")
-	// }
-	// itx.Data = *dec.Input
-	// if dec.From == nil {
-	// 	return errors.New("missing required field 'from' in transaction")
-	// }
-	// itx.From = *dec.From
-	// if dec.SourceHash == nil {
-	// 	return errors.New("missing required field 'sourceHash' in transaction")
-	// }
-	// itx.SourceHash = *dec.SourceHash
-	// // IsSystemTx may be omitted. Defaults to false.
-	// if dec.IsSystemTx != nil {
-	// 	itx.IsSystemTransaction = *dec.IsSystemTx
-	// }
-	//
-	// if dec.Nonce != nil {
-	// 	inner = &depositTxWithNonce{DepositTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
-	// }
+		itx.Mint = (*big.Int)(dec.Mint)
+		if dec.Input != nil {
+			itx.Data = *dec.Input
+		}
+		if dec.From != nil {
+			itx.From = *dec.From
+		}
+		if dec.SourceHash != nil {
+			itx.SourceHash = *dec.SourceHash
+		}
+		if dec.IsSystemTx != nil {
+			itx.IsSystemTransaction = *dec.IsSystemTx
+		}
 	case ZKSyncTxType, DepositTxType2:
 		var itx ZKSyncTransaction
 		inner = &itx
