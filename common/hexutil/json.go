@@ -284,10 +284,18 @@ func (b Uint64) MarshalText() ([]byte, error) {
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (b *Uint64) UnmarshalJSON(input []byte) error {
-	if !isString(input) {
+	// Try hex string first (standard)
+	if isString(input) {
+		return wrapTypeError(b.UnmarshalText(input[1:len(input)-1]), uint64T)
+	}
+
+	// Fall back to plain number (Sonic)
+	var num uint64
+	if err := json.Unmarshal(input, &num); err != nil {
 		return errNonString(uint64T)
 	}
-	return wrapTypeError(b.UnmarshalText(input[1:len(input)-1]), uint64T)
+	*b = Uint64(num)
+	return nil
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler
