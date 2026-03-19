@@ -45,6 +45,14 @@ var (
 
 // Transaction types.
 const (
+	ArbitrumDepositTxType         = 0x64
+	ArbitrumUnsignedTxType        = 0x65
+	ArbitrumContractTxType        = 0x66
+	ArbitrumRetryTxType           = 0x68
+	ArbitrumSubmitRetryableTxType = 0x69
+	ArbitrumInternalTxType        = 0x6A
+	ArbitrumLegacyTxType          = 0x78
+
 	LegacyTxType     = 0x00
 	AccessListTxType = 0x01
 	DynamicFeeTxType = 0x02
@@ -402,37 +410,14 @@ func (tx *Transaction) calcEffectiveGasTip(dst *uint256.Int, baseFee *uint256.In
 	return err
 }
 
-// EffectiveGasTipValue returns the effective gasTip value for the given base fee,
-// even if it would be negative. This can be used for sorting purposes.
-func (tx *Transaction) EffectiveGasTipValue(baseFee *big.Int) *big.Int {
-	// min(gasTipCap, gasFeeCap - baseFee)
-	dst := new(big.Int)
-	if baseFee == nil {
-		dst.Set(tx.inner.gasTipCap())
-		return dst
-	}
-
-	dst.Sub(tx.inner.gasFeeCap(), baseFee) // gasFeeCap - baseFee
-	gasTipCap := tx.inner.gasTipCap()
-	if gasTipCap.Cmp(dst) < 0 { // gasTipCap < (gasFeeCap - baseFee)
-		dst.Set(gasTipCap)
-	}
-	return dst
-}
-
 func (tx *Transaction) EffectiveGasTipCmp(other *Transaction, baseFee *uint256.Int) int {
 	if baseFee == nil {
 		return tx.GasTipCapCmp(other)
 	}
 	// Use more efficient internal method.
 	txTip, otherTip := new(uint256.Int), new(uint256.Int)
-	err1 := tx.calcEffectiveGasTip(txTip, baseFee)
-	err2 := other.calcEffectiveGasTip(otherTip, baseFee)
-	if err1 != nil || err2 != nil {
-		// fall back to big int comparison in case of error
-		base := baseFee.ToBig()
-		return tx.EffectiveGasTipValue(base).Cmp(other.EffectiveGasTipValue(base))
-	}
+	tx.calcEffectiveGasTip(txTip, baseFee)
+	other.calcEffectiveGasTip(otherTip, baseFee)
 	return txTip.Cmp(otherTip)
 }
 
