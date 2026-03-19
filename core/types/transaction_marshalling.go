@@ -54,6 +54,12 @@ type txJSON struct {
 	Commitments []kzg4844.Commitment `json:"commitments,omitempty"`
 	Proofs      []kzg4844.Proof      `json:"proofs,omitempty"`
 
+	// Optimism deposit fields:
+	From       *common.Address `json:"from,omitempty"`
+	SourceHash *common.Hash    `json:"sourceHash,omitempty"`
+	Mint       *hexutil.Big    `json:"mint,omitempty"`
+	IsSystemTx *bool           `json:"isSystemTx,omitempty"`
+
 	// Only used for encoding:
 	Hash common.Hash `json:"hash"`
 }
@@ -170,6 +176,17 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.S = (*hexutil.Big)(itx.S.ToBig())
 		yparity := itx.V.Uint64()
 		enc.YParity = (*hexutil.Uint64)(&yparity)
+	case *DepositTx:
+		enc.SourceHash = &itx.SourceHash
+		enc.From = &itx.From
+		enc.To = tx.To()
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Value = (*hexutil.Big)(itx.Value)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.Mint = (*hexutil.Big)(itx.Mint)
+		enc.IsSystemTx = &itx.IsSystemTransaction
+		var nonce hexutil.Uint64
+		enc.Nonce = &nonce
 	}
 	return json.Marshal(&enc)
 }
@@ -505,6 +522,46 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			if err := sanityCheckSignature(vbig, itx.R.ToBig(), itx.S.ToBig(), false); err != nil {
 				return err
 			}
+		}
+
+	case DepositTxType:
+		if dec.AccessList != nil || dec.MaxFeePerGas != nil ||
+			dec.MaxPriorityFeePerGas != nil {
+			return errors.New("unexpected field(s) in deposit transaction")
+		}
+		if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(common.Big0) != 0 {
+			return errors.New("deposit transaction GasPrice must be 0")
+		}
+		if (dec.V != nil && dec.V.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.R != nil && dec.R.ToInt().Cmp(common.Big0) != 0) ||
+			(dec.S != nil && dec.S.ToInt().Cmp(common.Big0) != 0) {
+			return errors.New("deposit transaction signature must be 0 or unset")
+		}
+		var itx DepositTx
+		inner = &itx
+		if dec.To != nil {
+			itx.To = dec.To
+		}
+		if dec.Gas == nil {
+			return errors.New("missing required field 'gas' for txdata")
+		}
+		itx.Gas = uint64(*dec.Gas)
+		if dec.Value == nil {
+			return errors.New("missing required field 'value' in transaction")
+		}
+		itx.Value = (*big.Int)(dec.Value)
+		itx.Mint = (*big.Int)(dec.Mint)
+		if dec.Input != nil {
+			itx.Data = *dec.Input
+		}
+		if dec.From != nil {
+			itx.From = *dec.From
+		}
+		if dec.SourceHash != nil {
+			itx.SourceHash = *dec.SourceHash
+		}
+		if dec.IsSystemTx != nil {
+			itx.IsSystemTransaction = *dec.IsSystemTx
 		}
 
 	default:
