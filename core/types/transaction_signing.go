@@ -152,6 +152,8 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 	var from common.Address
 	var embedded bool
 	switch inner := tx.inner.(type) {
+	case *TempoTx:
+		from, embedded = inner.From, true
 	case *ArbitrumUnsignedTx:
 		from, embedded = inner.From, true
 	case *ArbitrumContractTx:
