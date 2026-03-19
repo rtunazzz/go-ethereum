@@ -170,6 +170,10 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 		if inner.Sender != nil {
 			from, embedded = *inner.Sender, true
 		}
+	case *ZKSyncTransaction:
+		if inner.From != nil {
+			from, embedded = *inner.From, true
+		}
 	}
 	if embedded {
 		tx.from.Store(&sigCache{signer: signer, from: from})
