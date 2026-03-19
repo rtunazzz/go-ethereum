@@ -260,7 +260,10 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'v' in transaction")
 		}
 		itx.V = (*big.Int)(dec.V)
-		if itx.V.Sign() != 0 || itx.R.Sign() != 0 || itx.S.Sign() != 0 {
+		// V is excluded from the guard: some chains (e.g. Tempo) use system transactions
+		// with R=0, S=0 but V encoding the chain ID via EIP-155. R and S are the actual
+		// ECDSA signature components — R=0, S=0 can never be a valid signature.
+		if itx.R.Sign() != 0 || itx.S.Sign() != 0 {
 			if err := sanityCheckSignature(itx.V, itx.R, itx.S, true); err != nil {
 				return err
 			}
@@ -877,6 +880,34 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'from' in transaction")
 		}
 		itx.From = dec.From
+
+	case TempoTxType:
+		var itx TempoTx
+		inner = &itx
+		if dec.From != nil {
+			itx.From = *dec.From
+		}
+		if dec.ChainID != nil {
+			itx.ChainId = (*big.Int)(dec.ChainID)
+		}
+		if dec.Nonce != nil {
+			itx.Nonce = uint64(*dec.Nonce)
+		}
+		if dec.Gas != nil {
+			itx.Gas = uint64(*dec.Gas)
+		}
+		if dec.GasPrice != nil {
+			itx.GasPrice = (*big.Int)(dec.GasPrice)
+		}
+		if dec.To != nil {
+			itx.To = dec.To
+		}
+		if dec.Value != nil {
+			itx.Value = (*big.Int)(dec.Value)
+		}
+		if dec.Input != nil {
+			itx.Data = *dec.Input
+		}
 
 	default:
 		return ErrTxTypeNotSupported
