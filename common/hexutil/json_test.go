@@ -269,8 +269,6 @@ func TestMarshalBig(t *testing.T) {
 var unmarshalUint64Tests = []unmarshalTest{
 	// invalid encoding
 	{input: "", wantErr: errJSONEOF},
-	{input: "null", wantErr: errNonString(uint64T)},
-	{input: "10", wantErr: errNonString(uint64T)},
 	{input: `"0"`, wantErr: wrapTypeError(ErrMissingPrefix, uint64T)},
 	{input: `"0x"`, wantErr: wrapTypeError(ErrEmptyNumber, uint64T)},
 	{input: `"0x01"`, wantErr: wrapTypeError(ErrLeadingZero, uint64T)},
@@ -287,6 +285,8 @@ var unmarshalUint64Tests = []unmarshalTest{
 	{input: `"0x1122aaff"`, want: uint64(0x1122aaff)},
 	{input: `"0xbbb"`, want: uint64(0xbbb)},
 	{input: `"0xffffffffffffffff"`, want: uint64(0xffffffffffffffff)},
+	{input: "10", want: uint64(10)},
+	{input: "null", want: uint64(0)},
 }
 
 func TestUnmarshalUint64(t *testing.T) {
