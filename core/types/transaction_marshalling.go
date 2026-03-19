@@ -203,6 +203,19 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.IsSystemTx = &itx.IsSystemTransaction
 		var nonce hexutil.Uint64
 		enc.Nonce = &nonce
+
+	case *ZKSyncTransaction:
+		enc.ChainID = (*hexutil.Big)(itx.ChainID)
+		nonce := hexutil.Uint64(itx.Nonce.Uint64())
+		enc.Nonce = &nonce
+		enc.To = itx.To
+		gas := hexutil.Uint64(itx.Gas.Uint64())
+		enc.Gas = &gas
+		enc.MaxPriorityFeePerGas = (*hexutil.Big)(itx.GasTipCap)
+		enc.MaxFeePerGas = (*hexutil.Big)(itx.GasFeeCap)
+		enc.Value = (*hexutil.Big)(itx.Value)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.From = itx.From
 	}
 	return json.Marshal(&enc)
 }
@@ -843,6 +856,43 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		if dec.IsSystemTx != nil {
 			itx.IsSystemTransaction = *dec.IsSystemTx
 		}
+
+	case ZKSyncTxType, DepositTxType2:
+		var itx ZKSyncTransaction
+		inner = &itx
+		if dec.ChainID == nil {
+			return errors.New("missing required field 'chainId' in transaction")
+		}
+		itx.ChainID = (*big.Int)(dec.ChainID)
+		if dec.Nonce == nil {
+			return errors.New("missing required field 'nonce' in transaction")
+		}
+		itx.Nonce = new(big.Int).SetUint64(uint64(*dec.Nonce))
+		itx.To = dec.To
+		if dec.Gas == nil {
+			return errors.New("missing required field 'gas' for txdata")
+		}
+		itx.Gas = new(big.Int).SetUint64(uint64(*dec.Gas))
+		if dec.MaxPriorityFeePerGas == nil {
+			return errors.New("missing required field 'maxPriorityFeePerGas' for txdata")
+		}
+		itx.GasTipCap = (*big.Int)(dec.MaxPriorityFeePerGas)
+		if dec.MaxFeePerGas == nil {
+			return errors.New("missing required field 'maxFeePerGas' for txdata")
+		}
+		itx.GasFeeCap = (*big.Int)(dec.MaxFeePerGas)
+		if dec.Value == nil {
+			return errors.New("missing required field 'value' in transaction")
+		}
+		itx.Value = (*big.Int)(dec.Value)
+		if dec.Input == nil {
+			return errors.New("missing required field 'input' in transaction")
+		}
+		itx.Data = *dec.Input
+		if dec.From == nil {
+			return errors.New("missing required field 'from' in transaction")
+		}
+		itx.From = dec.From
 
 	default:
 		return ErrTxTypeNotSupported
