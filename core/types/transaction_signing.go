@@ -148,6 +148,34 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 		}
 	}
 
+	// L2/system tx types embed the sender — no ECDSA recovery needed.
+	var from common.Address
+	var embedded bool
+	switch inner := tx.inner.(type) {
+	case *ArbitrumUnsignedTx:
+		from, embedded = inner.From, true
+	case *ArbitrumContractTx:
+		from, embedded = inner.From, true
+	case *ArbitrumDepositTx:
+		from, embedded = inner.From, true
+	case *ArbitrumRetryTx:
+		from, embedded = inner.From, true
+	case *ArbitrumSubmitRetryableTx:
+		from, embedded = inner.From, true
+	case *DepositTx:
+		from, embedded = inner.From, true
+	case *ArbitrumInternalTx:
+		from, embedded = ArbosAddress, true
+	case *ArbitrumLegacyTxData:
+		if inner.Sender != nil {
+			from, embedded = *inner.Sender, true
+		}
+	}
+	if embedded {
+		tx.from.Store(&sigCache{signer: signer, from: from})
+		return from, nil
+	}
+
 	addr, err := signer.Sender(tx)
 	if err != nil {
 		return common.Address{}, err
