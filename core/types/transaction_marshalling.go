@@ -216,6 +216,19 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.Value = (*hexutil.Big)(itx.Value)
 		enc.Input = (*hexutil.Bytes)(&itx.Data)
 		enc.From = itx.From
+
+	case *MorphL1MessageTx:
+		enc.From = &itx.From
+		enc.ChainID = (*hexutil.Big)(itx.ChainId)
+		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.GasPrice = (*hexutil.Big)(itx.GasPrice)
+		enc.To = itx.To
+		enc.Value = (*hexutil.Big)(itx.Value)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.V = (*hexutil.Big)(common.Big0)
+		enc.R = (*hexutil.Big)(common.Big0)
+		enc.S = (*hexutil.Big)(common.Big0)
 	}
 	return json.Marshal(&enc)
 }
@@ -899,6 +912,34 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 
 	case TempoTxType:
 		var itx TempoTx
+		inner = &itx
+		if dec.From != nil {
+			itx.From = *dec.From
+		}
+		if dec.ChainID != nil {
+			itx.ChainId = (*big.Int)(dec.ChainID)
+		}
+		if dec.Nonce != nil {
+			itx.Nonce = uint64(*dec.Nonce)
+		}
+		if dec.Gas != nil {
+			itx.Gas = uint64(*dec.Gas)
+		}
+		if dec.GasPrice != nil {
+			itx.GasPrice = (*big.Int)(dec.GasPrice)
+		}
+		if dec.To != nil {
+			itx.To = dec.To
+		}
+		if dec.Value != nil {
+			itx.Value = (*big.Int)(dec.Value)
+		}
+		if dec.Input != nil {
+			itx.Data = *dec.Input
+		}
+
+	case MorphL1MessageTxType:
+		var itx MorphL1MessageTx
 		inner = &itx
 		if dec.From != nil {
 			itx.From = *dec.From
