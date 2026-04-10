@@ -222,6 +222,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(SetCodeTx)
 	case DepositTxType:
 		inner = new(DepositTx)
+	case MorphL1MessageTxType:
+		inner = new(MorphL1MessageTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
