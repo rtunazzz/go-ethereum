@@ -834,13 +834,13 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		}
 
 	case DepositTxType:
-		if dec.AccessList != nil || dec.MaxFeePerGas != nil ||
-			dec.MaxPriorityFeePerGas != nil {
+		if dec.AccessList != nil {
 			return errors.New("unexpected field(s) in deposit transaction")
 		}
-		if dec.GasPrice != nil && dec.GasPrice.ToInt().Cmp(common.Big0) != 0 {
-			return errors.New("deposit transaction GasPrice must be 0")
-		}
+		// Berachain (bera-geth) returns gasPrice, maxFeePerGas and
+		// maxPriorityFeePerGas on its PoL deposit transactions, with a
+		// non-zero gasPrice. DepositTx has no fee fields to store them in,
+		// so fee fields are ignored rather than rejected.
 		if (dec.V != nil && dec.V.ToInt().Cmp(common.Big0) != 0) ||
 			(dec.R != nil && dec.R.ToInt().Cmp(common.Big0) != 0) ||
 			(dec.S != nil && dec.S.ToInt().Cmp(common.Big0) != 0) {
