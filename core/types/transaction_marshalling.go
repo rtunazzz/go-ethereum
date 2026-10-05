@@ -977,9 +977,11 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 
 	// Retain the RPC-provided sender when the signature is all-zero (system
 	// transactions, e.g. Stable): R=0, S=0 is never a valid ECDSA signature,
-	// so Sender cannot recover it and falls back to this address.
+	// so Sender cannot recover it and falls back to this address. Custom tx
+	// types with embedded senders (e.g. ZKSyncTransaction) report nil
+	// signature values — skip them.
 	if dec.From != nil {
-		if _, r, s := inner.rawSignatureValues(); r.Sign() == 0 && s.Sign() == 0 {
+		if _, r, s := inner.rawSignatureValues(); r != nil && s != nil && r.Sign() == 0 && s.Sign() == 0 {
 			tx.jsonFrom = dec.From
 		}
 	}

@@ -49,6 +49,27 @@ func TestZeroSignatureSystemTxSender(t *testing.T) {
 	}
 }
 
+// zkSync transactions (0x71/0xFF, e.g. Abstract) require a JSON 'from' and
+// report nil signature values; decoding them must not panic, and the sender
+// resolves via the embedded-sender path.
+func TestZKSyncTxDecodeNoPanic(t *testing.T) {
+	want := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	for _, typ := range []string{"0x71", "0xff"} {
+		raw := `{"type":"` + typ + `","chainId":"0xab5","nonce":"0x1","to":"0x0000000000000000000000000000000000009999","gas":"0x100000","maxFeePerGas":"0x5f5e100","maxPriorityFeePerGas":"0x0","value":"0x0","input":"0x","from":"` + want.Hex() + `","hash":"0x0000000000000000000000000000000000000000000000000000000000000001"}`
+		var tx Transaction
+		if err := json.Unmarshal([]byte(raw), &tx); err != nil {
+			t.Fatalf("type %s: unmarshal: %v", typ, err)
+		}
+		from, err := Sender(LatestSignerForChainID(big.NewInt(2741)), &tx)
+		if err != nil {
+			t.Fatalf("type %s: Sender: %v", typ, err)
+		}
+		if from != want {
+			t.Fatalf("type %s: sender = %s, want %s", typ, from, want)
+		}
+	}
+}
+
 // A conflicting JSON 'from' must not override ECDSA recovery for signed txs.
 func TestSignedTxIgnoresJSONFrom(t *testing.T) {
 	key, err := crypto.GenerateKey()
