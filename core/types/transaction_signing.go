@@ -178,6 +178,13 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 		if inner.From != nil {
 			from, embedded = *inner.From, true
 		}
+	default:
+		// System transactions on standard types (e.g. Stable) carry a zero
+		// signature that ECDSA recovery cannot handle; use the sender
+		// retained from the JSON payload instead.
+		if tx.jsonFrom != nil {
+			from, embedded = *tx.jsonFrom, true
+		}
 	}
 	if embedded {
 		tx.from.Store(&sigCache{signer: signer, from: from})

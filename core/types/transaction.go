@@ -69,6 +69,11 @@ type Transaction struct {
 	hash atomic.Pointer[common.Hash]
 	size atomic.Uint64
 	from atomic.Pointer[sigCache]
+
+	// jsonFrom is the sender reported by the RPC node, retained at JSON decode
+	// time for zero-signature system transactions (R=0, S=0 — e.g. Stable),
+	// where ECDSA sender recovery is impossible. Nil for regular transactions.
+	jsonFrom *common.Address
 }
 
 // NewTx creates a new transaction.

@@ -230,6 +230,11 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.R = (*hexutil.Big)(common.Big0)
 		enc.S = (*hexutil.Big)(common.Big0)
 	}
+	// Preserve the RPC-provided sender of zero-signature system transactions
+	// across JSON round-trips.
+	if enc.From == nil {
+		enc.From = tx.jsonFrom
+	}
 	return json.Marshal(&enc)
 }
 
@@ -968,6 +973,15 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 
 	default:
 		return ErrTxTypeNotSupported
+	}
+
+	// Retain the RPC-provided sender when the signature is all-zero (system
+	// transactions, e.g. Stable): R=0, S=0 is never a valid ECDSA signature,
+	// so Sender cannot recover it and falls back to this address.
+	if dec.From != nil {
+		if _, r, s := inner.rawSignatureValues(); r.Sign() == 0 && s.Sign() == 0 {
+			tx.jsonFrom = dec.From
+		}
 	}
 
 	// Now set the inner transaction.
