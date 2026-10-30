@@ -123,6 +123,18 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 			enc.ChainID = (*hexutil.Big)(tx.ChainId())
 		}
 
+	case *FlowDirectCallTx:
+		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
+		enc.To = tx.To()
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.GasPrice = (*hexutil.Big)(itx.GasPrice)
+		enc.Value = (*hexutil.Big)(itx.Value)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.V = (*hexutil.Big)(itx.V)
+		enc.R = (*hexutil.Big)(itx.R)
+		enc.S = (*hexutil.Big)(itx.S)
+		enc.From = &itx.From
+
 	case *AccessListTx:
 		enc.ChainID = (*hexutil.Big)(itx.ChainID)
 		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
@@ -297,6 +309,15 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		if itx.R.Sign() != 0 || itx.S.Sign() != 0 {
 			if err := sanityCheckSignature(itx.V, itx.R, itx.S, true); err != nil {
 				return err
+			}
+		}
+		// Flow EVM direct call (see FlowDirectCallTx); V first so other legacy
+		// txs pay a single comparison.
+		if itx.V.Cmp(flowDirectCallV) == 0 && itx.R.BitLen() <= 8*common.AddressLength && itx.S.BitLen() <= 8 {
+			inner = &FlowDirectCallTx{
+				LegacyTx: itx,
+				From:     common.BigToAddress(itx.R),
+				SubType:  uint8(itx.S.Uint64()),
 			}
 		}
 

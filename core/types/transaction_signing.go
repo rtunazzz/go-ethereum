@@ -168,6 +168,8 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 		from, embedded = inner.From, true
 	case *DepositTx:
 		from, embedded = inner.From, true
+	case *FlowDirectCallTx:
+		from, embedded = inner.From, true
 	case *ArbitrumInternalTx:
 		from, embedded = ArbosAddress, true
 	case *ArbitrumLegacyTxData:
