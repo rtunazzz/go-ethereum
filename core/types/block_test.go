@@ -373,3 +373,16 @@ func TestRlpDecodeParentHash(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockWithHash(t *testing.T) {
+	header := &Header{Number: big.NewInt(1), Difficulty: big.NewInt(0)}
+	rpcHash := common.HexToHash("0x1234")
+
+	block := NewBlockWithHeader(header).WithHash(rpcHash)
+	if have := block.Hash(); have != rpcHash {
+		t.Fatalf("Hash after WithHash: have %x, want %x", have, rpcHash)
+	}
+	if have, want := block.WithBody(Body{}).Hash(), header.Hash(); have != want {
+		t.Fatalf("Hash after WithBody: have %x, want recomputed %x", have, want)
+	}
+}

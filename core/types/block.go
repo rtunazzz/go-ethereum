@@ -555,6 +555,14 @@ func (b *Block) Hash() common.Hash {
 	return h
 }
 
+// WithHash sets the hash Hash returns, for a block decoded from an RPC whose
+// chain hashes headers differently from this package (ZKsync-derivatives, Flow,
+// Tempo, ...). Returns b. WithBody after it returns a fresh block without it.
+func (b *Block) WithHash(h common.Hash) *Block {
+	b.hash.Store(&h)
+	return b
+}
+
 type Blocks []*Block
 
 // HeaderParentHashFromRLP returns the parentHash of an RLP-encoded
