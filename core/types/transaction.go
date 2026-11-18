@@ -323,6 +323,16 @@ func (tx *Transaction) GasFeeCap() *big.Int { return new(big.Int).Set(tx.inner.g
 // Value returns the ether amount of the transaction.
 func (tx *Transaction) Value() *big.Int { return new(big.Int).Set(tx.inner.value()) }
 
+// Mint returns a copy of the amount minted on L2 for deposit transactions
+// (type 0x7E). The return value is nil if the transaction is not a deposit
+// transaction or if the deposit does not mint.
+func (tx *Transaction) Mint() *big.Int {
+	if inner, ok := tx.inner.(*DepositTx); ok && inner.Mint != nil {
+		return new(big.Int).Set(inner.Mint)
+	}
+	return nil
+}
+
 // Nonce returns the sender account nonce of the transaction.
 func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
